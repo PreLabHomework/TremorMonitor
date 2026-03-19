@@ -1,0 +1,4 @@
+C:/Users/Hamza/Documents/TremorMonitor/android/app/.cxx/Debug/3a3l346h/x86_64/CMakeFiles/_CMakeLTOTest-CXX/bin/CMakeFiles/foo.dir
+C:/Users/Hamza/Documents/TremorMonitor/android/app/.cxx/Debug/3a3l346h/x86_64/CMakeFiles/_CMakeLTOTest-CXX/bin/CMakeFiles/boo.dir
+C:/Users/Hamza/Documents/TremorMonitor/android/app/.cxx/Debug/3a3l346h/x86_64/CMakeFiles/_CMakeLTOTest-CXX/bin/CMakeFiles/edit_cache.dir
+C:/Users/Hamza/Documents/TremorMonitor/android/app/.cxx/Debug/3a3l346h/x86_64/CMakeFiles/_CMakeLTOTest-CXX/bin/CMakeFiles/rebuild_cache.dir

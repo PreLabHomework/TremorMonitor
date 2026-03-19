@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "BlePlx_autolinked_build",
+		"source" : "C:/Users/Hamza/Documents/TremorMonitor/node_modules/react-native-ble-plx/android/build/generated/source/codegen/jni"
+	}
+}
