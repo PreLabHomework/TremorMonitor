@@ -1,202 +1,185 @@
+import { Buffer } from 'buffer';
 import { BleManager } from 'react-native-ble-plx';
+import { PermissionsAndroid, Platform } from 'react-native';
 
-// BLE UUIDs - Eric needs to use these same UUIDs in his ESP32 code
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
-const TREMOR_CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
 
 class BLEService {
   constructor() {
     this.manager = new BleManager();
     this.device = null;
-    this.isConnected = false;
-    
-    // Callbacks
+    this.characteristic = null;
     this.onConnectionChange = null;
     this.onTremorPacket = null;
   }
 
-  // Initialize BLE and check permissions
-  async initialize() {
-    const state = await this.manager.state();
-    
-    if (state === 'PoweredOff') {
-      throw new Error('Bluetooth is turned off. Please enable it.');
+  async requestPermissions() {
+    if (Platform.OS === 'android') {
+      if (Platform.Version >= 31) {
+        const granted = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        ]);
+        return (
+          granted['android.permission.BLUETOOTH_SCAN'] === 'granted' &&
+          granted['android.permission.BLUETOOTH_CONNECT'] === 'granted' &&
+          granted['android.permission.ACCESS_FINE_LOCATION'] === 'granted'
+        );
+      } else {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+        return granted === 'granted';
+      }
     }
-    
-    console.log('BLE Manager initialized');
+    return true;
   }
 
-  // Scan for devices (filter by name)
-  async scanForDevices(onDeviceFound, deviceName = 'TremorSleeve') {
-    console.log('Starting BLE scan...');
-    
-    this.manager.startDeviceScan(null, null, (error, device) => {
-      if (error) {
-        console.error('Scan error:', error);
-        return;
-      }
+  async scanForDevices() {
+    console.log('🔍 Starting BLE scan...');
+    const hasPermission = await this.requestPermissions();
+    if (!hasPermission) {
+      console.error('❌ BLE permissions not granted');
+      return null;
+    }
 
-      // Filter by device name
-      if (device.name && device.name.includes(deviceName)) {
-        console.log('Found device:', device.name, device.id);
-        onDeviceFound(device);
-      }
-    });
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.manager.stopDeviceScan();
+        console.log('⏱️ Scan timeout - no TremorSleeve found');
+        resolve(null);
+      }, 10000);
 
-    // Stop scan after 10 seconds
-    setTimeout(() => {
-      this.manager.stopDeviceScan();
-      console.log('Scan stopped');
-    }, 10000);
-  }
+      this.manager.startDeviceScan(null, null, (error, device) => {
+        if (error) {
+          console.error('❌ Scan error:', error);
+          clearTimeout(timeout);
+          this.manager.stopDeviceScan();
+          reject(error);
+          return;
+        }
 
-  // Stop scanning
-  stopScan() {
-    this.manager.stopDeviceScan();
-  }
+        console.log('📡 Found device:', device.name || 'Unknown');
 
-  // Connect to a specific device
-  async connectToDevice(deviceId) {
-    try {
-      console.log('Connecting to device:', deviceId);
-      
-      // Stop scanning
-      this.stopScan();
-
-      // Connect to device
-      this.device = await this.manager.connectToDevice(deviceId);
-      
-      console.log('Connected! Discovering services...');
-      
-      // Discover services and characteristics
-      await this.device.discoverAllServicesAndCharacteristics();
-      
-      this.isConnected = true;
-      
-      if (this.onConnectionChange) {
-        this.onConnectionChange(true);
-      }
-
-      // Monitor disconnection
-      this.device.onDisconnected((error, device) => {
-        console.log('Device disconnected:', device.id);
-        this.isConnected = false;
-        this.device = null;
-        
-        if (this.onConnectionChange) {
-          this.onConnectionChange(false);
+        if (device.name === 'TremorSleeve') {
+          console.log('✅ Found TremorSleeve!');
+          clearTimeout(timeout);
+          this.manager.stopDeviceScan();
+          resolve(device);
         }
       });
-
-      // Start listening for tremor packets
-      this.startMonitoring();
-
-      return true;
-    } catch (error) {
-      console.error('Connection error:', error);
-      this.isConnected = false;
-      throw error;
-    }
+    });
   }
 
-  // Start monitoring for tremor data
-  async startMonitoring() {
-    if (!this.device) {
-      console.error('No device connected');
-      return;
-    }
-
+  async connectToDevice(device) {
     try {
-      console.log('Starting tremor monitoring...');
-      
-      // Subscribe to tremor characteristic
+      console.log('🔗 Connecting to device...');
+      this.device = await device.connect();
+      console.log('✅ Connected!');
+
+      console.log('🔍 Discovering services...');
+      await this.device.discoverAllServicesAndCharacteristics();
+      console.log('✅ Services discovered!');
+
+      console.log('📻 Starting to monitor characteristic...');
       this.device.monitorCharacteristicForService(
         SERVICE_UUID,
-        TREMOR_CHARACTERISTIC_UUID,
+        CHARACTERISTIC_UUID,
         (error, characteristic) => {
           if (error) {
-            console.error('Monitoring error:', error);
+            console.error('❌ Monitor error:', error);
             return;
           }
 
-          if (characteristic.value) {
-            // Decode the packet
+          if (characteristic?.value) {
+            console.log('📦 Received BLE packet!');
             const packet = this.decodeTremorPacket(characteristic.value);
-            console.log('Received tremor packet:', packet);
-            
-            if (this.onTremorPacket) {
+            if (packet && this.onTremorPacket) {
               this.onTremorPacket(packet);
             }
           }
         }
       );
-      
-      console.log('Monitoring started');
+
+      if (this.onConnectionChange) {
+        this.onConnectionChange(true);
+      }
+
+      console.log('✅ Monitoring started!');
+      return true;
     } catch (error) {
-      console.error('Failed to start monitoring:', error);
+      console.error('❌ Connection error:', error);
+      if (this.onConnectionChange) {
+        this.onConnectionChange(false);
+      }
+      return false;
     }
   }
 
-  // Decode BLE packet to tremor data
-  // Packet structure (14 bytes):
-  // uint32_t timestamp (4 bytes)
-  // float maxAmplitude (4 bytes)
-  // float dominantFreq (4 bytes)
-  // uint16_t duration (2 bytes)
-  decodeTremorPacket(base64Value) {
+  decodeTremorPacket(base64Data) {
     try {
-      // Decode base64 to binary
-      const buffer = Buffer.from(base64Value, 'base64');
+      const buffer = Buffer.from(base64Data, 'base64');
       
-      // Read values from buffer
-      const timestamp = buffer.readUInt32LE(0);
-      const maxAmplitude = buffer.readFloatLE(4);
-      const dominantFreq = buffer.readFloatLE(8);
-      const duration = buffer.readUInt16LE(12);
+      console.log('📦 Packet size:', buffer.length, 'bytes');
+      
+      // Eric's actual packet structure: 5 bytes total
+      // float maxAmplitude (4 bytes) + bool tremor (1 byte)
+      
+      if (buffer.length < 5) {
+        console.error('❌ Packet too short:', buffer.length);
+        return null;
+      }
+
+      const maxAmplitude = buffer.readFloatLE(0);     // bytes 0-3
+      const tremorDetected = buffer.readUInt8(4) !== 0;       // byte 4
+
+      console.log('📊 Decoded:', {
+        maxAmplitude: maxAmplitude.toFixed(2),
+        tremor: tremorDetected
+      });
 
       return {
-        timestamp,
-        maxAmplitude,
-        dominantFreq,
-        duration,
-        receivedAt: Date.now(),
+        timestamp: Date.now(),
+        maxAmplitude: maxAmplitude,
+        dominantFreq: 5.0,  // Default tremor frequency
+        duration: tremorDetected ? 60 : 0,
+        tremor: tremorDetected
       };
     } catch (error) {
-      console.error('Error decoding packet:', error);
+      console.error('❌ Error decoding packet:', error);
       return null;
     }
   }
 
-  // Disconnect from device
   async disconnect() {
-    if (this.device) {
-      try {
+    try {
+      if (this.device) {
         await this.device.cancelConnection();
-        console.log('Disconnected successfully');
-      } catch (error) {
-        console.error('Disconnect error:', error);
+        this.device = null;
+        console.log('🔌 Disconnected');
+        if (this.onConnectionChange) {
+          this.onConnectionChange(false);
+        }
       }
-      
-      this.device = null;
-      this.isConnected = false;
-      
-      if (this.onConnectionChange) {
-        this.onConnectionChange(false);
-      }
+    } catch (error) {
+      console.error('❌ Disconnect error:', error);
     }
   }
 
-  // Get current connection status
-  getConnectionStatus() {
-    return this.isConnected;
+  setConnectionCallback(callback) {
+    this.onConnectionChange = callback;
   }
 
-  // Cleanup
+  setTremorCallback(callback) {
+    this.onTremorPacket = callback;
+  }
+
   destroy() {
     this.disconnect();
     this.manager.destroy();
   }
 }
 
-// Export singleton instance
 export default new BLEService();
