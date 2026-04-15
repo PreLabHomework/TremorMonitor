@@ -9,6 +9,7 @@ import {
 import { Card, Button } from 'react-native-paper';
 import BLEService from '../services/BLEService';
 import DatabaseService from '../services/DatabaseService';
+import FirebaseService from '../services/FirebaseService';
 
 const LiveMonitor = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -224,13 +225,28 @@ const LiveMonitor = () => {
     try {
       console.log('⏹️ Stopping recording...');
       await DatabaseService.endSession(currentSessionId);
+      
+      // Upload to Firebase Cloud
+      try {
+        console.log('☁️ Uploading to cloud...');
+        const sessionData = await DatabaseService.getSession(currentSessionId);
+        const features = await DatabaseService.getSessionFeatures(currentSessionId);
+        const events = await DatabaseService.getSessionEvents(currentSessionId);
+        
+        await FirebaseService.uploadSession(sessionData, features, events);
+        console.log('✅ Session uploaded to cloud');
+      } catch (firebaseError) {
+        console.error('❌ Firebase upload failed (continuing anyway):', firebaseError);
+        // Don't block the user if Firebase fails - session is still saved locally
+      }
+      
       setIsRecording(false);
       setCurrentSessionId(null);
       console.log('✅ Recording stopped');
       
       Alert.alert(
         'Recording Stopped', 
-        'Session saved successfully. View it in the History tab.'
+        'Session saved locally and uploaded to cloud. View it in the History tab.'
       );
       
       // Reload summary
@@ -383,8 +399,8 @@ const LiveMonitor = () => {
             <Text style={styles.infoIcon}>ℹ️</Text>
             <Text style={styles.infoText}>
               {isRecording 
-                ? 'Recording tremor data. Press "Stop Recording" when finished. Data will be saved to History.'
-                : 'Device is monitoring for tremor activity. Press "Start Recording Session" to save data.'
+                ? 'Recording tremor data. Data is being saved locally and will upload to cloud when you stop. Press "Stop Recording" when finished.'
+                : 'Device is monitoring for tremor activity. Press "Start Recording Session" to save data locally and upload to cloud for your doctor.'
               }
             </Text>
           </Card.Content>
