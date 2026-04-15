@@ -12,14 +12,14 @@ import {
   RadioButton,
   Divider,
   Button,
-  ProgressBar,
   List,
 } from 'react-native-paper';
 import Slider from '@react-native-community/slider';
+import { CommonActions } from '@react-navigation/native';
 import DatabaseService from '../services/DatabaseService';
 import BLEService from '../services/BLEService';
 
-const Settings = () => {
+const Settings = ({ navigation }) => {
   // Medication Settings
   const [medicationMode, setMedicationMode] = useState('manual');
   const [severityThreshold, setSeverityThreshold] = useState(2);
@@ -36,7 +36,9 @@ const Settings = () => {
   // BLE Device Settings
   const [deviceConnected, setDeviceConnected] = useState(false);
   const [deviceName, setDeviceName] = useState('Not Connected');
-  const [batteryLevel, setBatteryLevel] = useState(100);
+
+  // App Mode
+  const [currentMode, setCurrentMode] = useState('patient');
 
   useEffect(() => {
     loadSettings();
@@ -48,11 +50,8 @@ const Settings = () => {
       setDeviceConnected(connected);
       if (connected) {
         setDeviceName('TremorSleeve');
-        // Battery level would come from BLE in real implementation
-        setBatteryLevel(85);
       } else {
         setDeviceName('Not Connected');
-        setBatteryLevel(100);
       }
     });
   };
@@ -69,6 +68,7 @@ const Settings = () => {
       const dailySummaryEnabled = await DatabaseService.getSetting('daily_summary', false);
       const researchEnabled = await DatabaseService.getSetting('research_sharing', false);
       const doctorEnabled = await DatabaseService.getSetting('doctor_portal', false);
+      const appMode = await DatabaseService.getSetting('app_mode', 'patient');
 
       setMedicationMode(medMode);
       setSeverityThreshold(sevThreshold);
@@ -77,6 +77,7 @@ const Settings = () => {
       setDailySummary(dailySummaryEnabled);
       setResearchSharing(researchEnabled);
       setDoctorPortalAccess(doctorEnabled);
+      setCurrentMode(appMode);
 
       console.log('✅ Settings loaded');
     } catch (error) {
@@ -162,6 +163,43 @@ const Settings = () => {
     }
   };
 
+  const handleSwitchMode = () => {
+    const newMode = currentMode === 'patient' ? 'doctor' : 'patient';
+    const newModeName = newMode === 'patient' ? 'Patient' : 'Doctor';
+    
+    Alert.alert(
+      'Switch Mode',
+      `Switch to ${newModeName} Mode?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Switch', 
+          onPress: async () => {
+            await saveSetting('app_mode', newMode);
+            setCurrentMode(newMode);
+            
+            // Navigate to the new mode
+            if (newMode === 'patient') {
+              navigation.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'PatientApp' }],
+                })
+              );
+            } else {
+              navigation.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'DoctorApp' }],
+                })
+              );
+            }
+          }
+        },
+      ]
+    );
+  };
+
   const handleDisconnectDevice = () => {
     Alert.alert(
       'Disconnect Device',
@@ -210,55 +248,80 @@ const Settings = () => {
 
   return (
     <ScrollView style={styles.container}>
-      {/* Medication Settings */}
+      {/* App Mode Switcher */}
       <Card style={styles.card}>
         <Card.Content>
-          <Text style={styles.sectionTitle}>Medication Management</Text>
+          <Text style={styles.sectionTitle}>App Mode</Text>
           
-          <View style={styles.settingItem}>
-            <Text style={styles.settingLabel}>Medication Mode</Text>
-            <RadioButton.Group 
-              onValueChange={handleMedicationModeChange} 
-              value={medicationMode}
-            >
-              <View style={styles.radioItem}>
-                <RadioButton value="manual" />
-                <Text style={styles.radioLabel}>Manual - I control when to take medication</Text>
-              </View>
-              <View style={styles.radioItem}>
-                <RadioButton value="auto" />
-                <Text style={styles.radioLabel}>Auto - Remind me based on tremor severity</Text>
-              </View>
-            </RadioButton.Group>
+          <View style={styles.modeInfo}>
+            <Text style={styles.currentModeLabel}>Current Mode:</Text>
+            <Text style={styles.currentModeValue}>
+              {currentMode === 'patient' ? '👤 Patient' : '👨‍⚕️ Doctor'}
+            </Text>
           </View>
-
-          {medicationMode === 'auto' && (
-            <>
-              <Divider style={styles.divider} />
-              <View style={styles.settingItem}>
-                <Text style={styles.settingLabel}>Severity Threshold</Text>
-                <Text style={styles.settingDescription}>
-                  Get medication reminder when tremor reaches this severity
-                </Text>
-                <View style={styles.sliderContainer}>
-                  <Slider
-                    style={styles.slider}
-                    minimumValue={0}
-                    maximumValue={4}
-                    step={1}
-                    value={severityThreshold}
-                    onValueChange={handleSeverityThresholdChange}
-                    minimumTrackTintColor="#1976D2"
-                    maximumTrackTintColor="#ddd"
-                    thumbTintColor="#1976D2"
-                  />
-                  <Text style={styles.sliderValue}>{getSeverityLabel(severityThreshold)}</Text>
-                </View>
-              </View>
-            </>
-          )}
+          
+          <Button
+            mode="outlined"
+            onPress={handleSwitchMode}
+            style={styles.button}
+            icon="swap-horizontal"
+          >
+            Switch to {currentMode === 'patient' ? 'Doctor' : 'Patient'} Mode
+          </Button>
         </Card.Content>
       </Card>
+
+      {/* Medication Settings - Only show in Patient Mode */}
+      {currentMode === 'patient' && (
+        <Card style={styles.card}>
+          <Card.Content>
+            <Text style={styles.sectionTitle}>Medication Management</Text>
+            
+            <View style={styles.settingItem}>
+              <Text style={styles.settingLabel}>Medication Mode</Text>
+              <RadioButton.Group 
+                onValueChange={handleMedicationModeChange} 
+                value={medicationMode}
+              >
+                <View style={styles.radioItem}>
+                  <RadioButton value="manual" />
+                  <Text style={styles.radioLabel}>Manual - I control when to take medication</Text>
+                </View>
+                <View style={styles.radioItem}>
+                  <RadioButton value="auto" />
+                  <Text style={styles.radioLabel}>Auto - Remind me based on tremor severity</Text>
+                </View>
+              </RadioButton.Group>
+            </View>
+
+            {medicationMode === 'auto' && (
+              <>
+                <Divider style={styles.divider} />
+                <View style={styles.settingItem}>
+                  <Text style={styles.settingLabel}>Severity Threshold</Text>
+                  <Text style={styles.settingDescription}>
+                    Get medication reminder when tremor reaches this severity
+                  </Text>
+                  <View style={styles.sliderContainer}>
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={0}
+                      maximumValue={4}
+                      step={1}
+                      value={severityThreshold}
+                      onValueChange={handleSeverityThresholdChange}
+                      minimumTrackTintColor="#1976D2"
+                      maximumTrackTintColor="#ddd"
+                      thumbTintColor="#1976D2"
+                    />
+                    <Text style={styles.sliderValue}>{getSeverityLabel(severityThreshold)}</Text>
+                  </View>
+                </View>
+              </>
+            )}
+          </Card.Content>
+        </Card>
+      )}
 
       {/* Notification Settings */}
       <Card style={styles.card}>
@@ -360,35 +423,25 @@ const Settings = () => {
         </Card.Content>
       </Card>
 
-      {/* BLE Device */}
-      <Card style={styles.card}>
-        <Card.Content>
-          <Text style={styles.sectionTitle}>Connected Device</Text>
-          
-          <List.Item
-            title={deviceName}
-            description={deviceConnected ? 'TremorSleeve' : 'No device connected'}
-            left={props => (
-              <List.Icon 
-                {...props} 
-                icon={deviceConnected ? 'bluetooth-connect' : 'bluetooth-off'} 
-                color={deviceConnected ? '#4CAF50' : '#999'}
-              />
-            )}
-          />
+      {/* BLE Device - Only show in Patient Mode */}
+      {currentMode === 'patient' && (
+        <Card style={styles.card}>
+          <Card.Content>
+            <Text style={styles.sectionTitle}>Connected Device</Text>
+            
+            <List.Item
+              title={deviceName}
+              description={deviceConnected ? 'TremorSleeve Connected' : 'No device connected'}
+              left={props => (
+                <List.Icon 
+                  {...props} 
+                  icon={deviceConnected ? 'bluetooth-connect' : 'bluetooth-off'} 
+                  color={deviceConnected ? '#4CAF50' : '#999'}
+                />
+              )}
+            />
 
-          {deviceConnected && (
-            <>
-              <View style={styles.batteryContainer}>
-                <Text style={styles.batteryLabel}>Battery Level</Text>
-                <Text style={styles.batteryValue}>{batteryLevel}%</Text>
-              </View>
-              <ProgressBar 
-                progress={batteryLevel / 100} 
-                color="#4CAF50" 
-                style={styles.batteryBar}
-              />
-              
+            {deviceConnected && (
               <Button 
                 mode="outlined" 
                 onPress={handleDisconnectDevice}
@@ -397,10 +450,10 @@ const Settings = () => {
               >
                 Disconnect Device
               </Button>
-            </>
-          )}
-        </Card.Content>
-      </Card>
+            )}
+          </Card.Content>
+        </Card>
+      )}
 
       {/* Danger Zone */}
       <Card style={styles.dangerCard}>
@@ -464,6 +517,24 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     color: '#F44336',
   },
+  modeInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: '#E3F2FD',
+    borderRadius: 8,
+  },
+  currentModeLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginRight: 8,
+  },
+  currentModeValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1976D2',
+  },
   settingItem: {
     marginBottom: 8,
   },
@@ -513,27 +584,6 @@ const styles = StyleSheet.create({
     color: '#1976D2',
     fontWeight: '600',
     marginTop: 4,
-  },
-  batteryContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  batteryLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  batteryValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#4CAF50',
-  },
-  batteryBar: {
-    height: 8,
-    borderRadius: 4,
-    marginBottom: 16,
   },
   button: {
     marginTop: 8,
