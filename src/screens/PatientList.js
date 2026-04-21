@@ -1,310 +1,195 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  RefreshControl,
+  View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl,
 } from 'react-native';
-import { Card, Searchbar, Chip, Avatar } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import { Searchbar } from 'react-native-paper';
+import FirebaseService from '../services/FirebaseService';
+import { Card, IconCircle, Pill, EmptyState, PrimaryButton } from '../components/ui';
+import {
+  colors, spacing, radius, typography, shadows, icons,
+  severityColor, severityLabel,
+} from '../theme';
+
+const initials = (name) => {
+  if (!name) return '?';
+  const parts = name.trim().split(' ');
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+};
+
+const avatarColors = ['#14B8A6', '#6366F1', '#F97316', '#8B5CF6', '#EC4899', '#F59E0B'];
+const colorFor = (id) => {
+  let hash = 0;
+  for (let i = 0; i < (id || '').length; i++) hash = (hash * 31 + id.charCodeAt(i)) & 0xffffffff;
+  return avatarColors[Math.abs(hash) % avatarColors.length];
+};
+
+const timeAgo = (iso) => {
+  if (!iso) return 'No sessions yet';
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return 'Just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+};
 
 const PatientList = () => {
   const navigation = useNavigation();
   const [patients, setPatients] = useState([]);
-  const [filteredPatients, setFilteredPatients] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [aggregates, setAggregates] = useState({});
+  const [q, setQ] = useState('');
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadPatients();
-  }, []);
+  useFocusEffect(useCallback(() => { load(); }, []));
 
-  const loadPatients = async () => {
-    // Mock patient data for MVP
-    const mockPatients = [
-      {
-        id: 1,
-        name: 'John Doe',
-        age: 67,
-        initials: 'JD',
-        color: '#1976D2',
-        lastSession: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago
-        status: 'active',
-        totalSessions: 24,
-        avgSeverity: 2.3,
-        recentEpisodes: 5,
-      },
-      {
-        id: 2,
-        name: 'Mary Smith',
-        age: 72,
-        initials: 'MS',
-        color: '#4CAF50',
-        lastSession: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(), // 5 hours ago
-        status: 'active',
-        totalSessions: 31,
-        avgSeverity: 1.8,
-        recentEpisodes: 3,
-      },
-      {
-        id: 3,
-        name: 'Robert Kim',
-        age: 64,
-        initials: 'RK',
-        color: '#F44336',
-        lastSession: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // 1 day ago
-        status: 'inactive',
-        totalSessions: 18,
-        avgSeverity: 3.1,
-        recentEpisodes: 8,
-      },
-      {
-        id: 4,
-        name: 'Lisa Martinez',
-        age: 59,
-        initials: 'LM',
-        color: '#FF9800',
-        lastSession: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // 30 min ago
-        status: 'active',
-        totalSessions: 42,
-        avgSeverity: 2.7,
-        recentEpisodes: 6,
-      },
-      {
-        id: 5,
-        name: 'James Taylor',
-        age: 70,
-        initials: 'JT',
-        color: '#9C27B0',
-        lastSession: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days ago
-        status: 'inactive',
-        totalSessions: 15,
-        avgSeverity: 1.5,
-        recentEpisodes: 2,
-      },
-    ];
+  const load = async () => {
+    try {
+      const pts = await FirebaseService.getAllPatients();
+      setPatients(pts);
 
-    setPatients(mockPatients);
-    setFilteredPatients(mockPatients);
+      // Compute per-patient stats
+      const agg = {};
+      for (const p of pts) {
+        const sessions = await FirebaseService.getSessionsForPatient(p.id);
+        const totalSev = sessions.reduce((sum, s) => sum + (s.max_severity || 0), 0);
+        agg[p.id] = {
+          sessionCount: sessions.length,
+          lastSessionTime: sessions[0]?.start_time || null,
+          avgSeverity: sessions.length > 0 ? Math.round(totalSev / sessions.length) : 0,
+          lastSeverity: sessions[0]?.max_severity || 0,
+        };
+      }
+      setAggregates(agg);
+    } catch (e) {
+      console.error('PatientList load error:', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadPatients();
+    await load();
     setRefreshing(false);
   };
 
-  const handleSearch = (query) => {
-    setSearchQuery(query);
-    
-    if (query.trim() === '') {
-      setFilteredPatients(patients);
-    } else {
-      const filtered = patients.filter(patient =>
-        patient.name.toLowerCase().includes(query.toLowerCase())
-      );
-      setFilteredPatients(filtered);
-    }
-  };
-
-  const getSeverityColor = (severity) => {
-    if (severity < 1.0) return '#4CAF50';
-    if (severity < 2.0) return '#8BC34A';
-    if (severity < 3.0) return '#FFC107';
-    if (severity < 4.0) return '#FF9800';
-    return '#F44336';
-  };
-
-  const getTimeAgo = (dateString) => {
-    const now = new Date();
-    const date = new Date(dateString);
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return `${diffDays}d ago`;
-  };
-
-  const renderPatient = ({ item }) => (
-    <TouchableOpacity
-      activeOpacity={0.7}
-      onPress={() => navigation.navigate('PatientDetail', { patientId: item.id, patientName: item.name })}
-    >
-      <Card style={styles.patientCard}>
-        <Card.Content style={styles.cardContent}>
-          <View style={styles.patientHeader}>
-            <Avatar.Text
-              size={56}
-              label={item.initials}
-              style={{ backgroundColor: item.color }}
-            />
-            <View style={styles.patientInfo}>
-              <Text style={styles.patientName}>{item.name}</Text>
-              <Text style={styles.patientAge}>Age {item.age}</Text>
-              <Text style={styles.lastSession}>
-                Last session: {getTimeAgo(item.lastSession)}
-              </Text>
-            </View>
-            <Chip
-              style={[
-                styles.statusChip,
-                { backgroundColor: item.status === 'active' ? '#E8F5E9' : '#EEEEEE' }
-              ]}
-              textStyle={{
-                color: item.status === 'active' ? '#4CAF50' : '#999',
-                fontSize: 12,
-              }}
-            >
-              {item.status}
-            </Chip>
-          </View>
-
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>{item.totalSessions}</Text>
-              <Text style={styles.statLabel}>Sessions</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statValue, { color: getSeverityColor(item.avgSeverity) }]}>
-                {item.avgSeverity.toFixed(1)}
-              </Text>
-              <Text style={styles.statLabel}>Avg Severity</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>{item.recentEpisodes}</Text>
-              <Text style={styles.statLabel}>Recent Episodes</Text>
-            </View>
-          </View>
-        </Card.Content>
-      </Card>
-    </TouchableOpacity>
+  const filtered = !q.trim() ? patients : patients.filter(p =>
+    p.name?.toLowerCase().includes(q.toLowerCase())
   );
+
+  const renderPatient = ({ item: p }) => {
+    const stats = aggregates[p.id] || { sessionCount: 0, lastSessionTime: null, lastSeverity: 0 };
+    const color = colorFor(p.id);
+    return (
+      <Card
+        onPress={() => navigation.navigate('PatientDetail', { patientId: p.id, patientName: p.name })}
+        style={{ marginBottom: spacing.sm }}
+      >
+        <View style={styles.row}>
+          <View style={[styles.avatar, { backgroundColor: color + '1A' }]}>
+            <Text style={[styles.avatarText, { color }]}>{initials(p.name)}</Text>
+          </View>
+          <View style={{ flex: 1, marginLeft: spacing.md }}>
+            <Text style={[typography.h3, { color: colors.textPrimary }]}>{p.name}</Text>
+            <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+              {p.age ? `Age ${p.age} · ` : ''}{stats.sessionCount} session{stats.sessionCount !== 1 ? 's' : ''}
+            </Text>
+            <Text style={[typography.small, { color: colors.textTertiary, marginTop: 2 }]}>
+              {timeAgo(stats.lastSessionTime)}
+            </Text>
+          </View>
+          {stats.lastSessionTime && (
+            <Pill label={severityLabel(stats.lastSeverity)} color={severityColor(stats.lastSeverity)} />
+          )}
+        </View>
+      </Card>
+    );
+  };
+
+  if (loading) return null;
+
+  if (patients.length === 0) {
+    return (
+      <View style={styles.container}>
+        <EmptyState
+          icon={icons.patients}
+          title="No patients yet"
+          description="Add your first patient to start tracking their tremor data."
+          action={() => navigation.navigate('AddPatient')}
+          actionLabel="Add Patient"
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      <Searchbar
-        placeholder="Search patients..."
-        onChangeText={handleSearch}
-        value={searchQuery}
-        style={styles.searchBar}
-      />
-
-      {filteredPatients.length > 0 && (
-        <Text style={styles.count}>
-          {filteredPatients.length} {filteredPatients.length === 1 ? 'patient' : 'patients'}
-        </Text>
-      )}
+      <View style={styles.searchWrap}>
+        <Searchbar
+          placeholder="Search patients"
+          value={q}
+          onChangeText={setQ}
+          style={styles.search}
+          inputStyle={{ fontSize: 14 }}
+          iconColor={colors.textTertiary}
+        />
+      </View>
 
       <FlatList
-        data={filteredPatients}
+        data={filtered}
+        keyExtractor={(p) => p.id}
         renderItem={renderPatient}
-        keyExtractor={(item) => item.id.toString()}
-        contentContainerStyle={styles.listContainer}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={['#1976D2']}
-          />
-        }
+        contentContainerStyle={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No patients found</Text>
-          </View>
+          <Text style={[typography.body, { color: colors.textSecondary, textAlign: 'center', marginTop: spacing.xxl }]}>
+            No patients match "{q}"
+          </Text>
         }
       />
+
+      <TouchableOpacity
+        style={[styles.fab, shadows.lg]}
+        onPress={() => navigation.navigate('AddPatient')}
+        activeOpacity={0.85}
+      >
+        <MaterialCommunityIcons name={icons.add} size={26} color={colors.textOnPrimary} />
+      </TouchableOpacity>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
+  container: { flex: 1, backgroundColor: colors.background },
+  searchWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
   },
-  searchBar: {
-    margin: 16,
-    marginBottom: 8,
-    elevation: 2,
+  search: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    elevation: 0,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  count: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    fontSize: 14,
-    color: '#666',
+  list: { paddingHorizontal: spacing.lg, paddingBottom: 100 },
+  row: { flexDirection: 'row', alignItems: 'center' },
+  avatar: {
+    width: 48, height: 48, borderRadius: 24,
+    alignItems: 'center', justifyContent: 'center',
   },
-  listContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-  },
-  patientCard: {
-    marginBottom: 12,
-    elevation: 2,
-  },
-  cardContent: {
-    padding: 16,
-  },
-  patientHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  patientInfo: {
-    flex: 1,
-    marginLeft: 16,
-  },
-  patientName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  patientAge: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 2,
-  },
-  lastSession: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 2,
-  },
-  statusChip: {
-    height: 28,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-    paddingTop: 12,
-  },
-  statItem: {
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1976D2',
-  },
-  statLabel: {
-    fontSize: 11,
-    color: '#666',
-    marginTop: 2,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 100,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#999',
+  avatarText: { fontSize: 16, fontWeight: '700' },
+  fab: {
+    position: 'absolute',
+    right: spacing.lg,
+    bottom: spacing.lg,
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: colors.primary,
+    alignItems: 'center', justifyContent: 'center',
   },
 });
 

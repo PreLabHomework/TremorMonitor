@@ -1,164 +1,144 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Image,
-} from 'react-native';
-import { Card } from 'react-native-paper';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar } from 'react-native';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import DatabaseService from '../services/DatabaseService';
+import { colors, spacing, radius, typography, shadows, icons } from '../theme';
 
 const ModeSelection = ({ navigation }) => {
   const handleModeSelect = async (mode) => {
     try {
-      // Save selected mode to database
       await DatabaseService.setSetting('app_mode', mode);
-      console.log('✅ Mode selected:', mode);
-      
-      // Navigate to appropriate stack
-      if (mode === 'patient') {
-        navigation.replace('PatientApp');
-      } else {
-        navigation.replace('DoctorApp');
-      }
+      if (mode === 'patient') navigation.replace('PatientApp');
+      else if (mode === 'doctor') navigation.replace('DoctorApp');
+      else navigation.replace('ResearcherApp');
     } catch (error) {
-      console.error('❌ Error saving mode:', error);
+      console.error('Error saving mode:', error);
     }
   };
 
+  const modes = [
+    {
+      id: 'patient',
+      title: 'Patient',
+      description: 'Monitor your tremors, manage medication, and track your sessions.',
+      features: ['Live tremor monitoring', 'Medication dispenser control', 'Session history'],
+      color: colors.patientMode,
+      icon: icons.patient,
+    },
+    {
+      id: 'doctor',
+      title: 'Doctor',
+      description: 'Review patients, analyze session data, and adjust care plans.',
+      features: ['Patient dashboard', 'Individual patient records', 'Medication logs'],
+      color: colors.doctorMode,
+      icon: icons.doctor,
+    },
+    {
+      id: 'researcher',
+      title: 'Researcher',
+      description: 'Aggregate data from consenting patients for clinical research.',
+      features: ['Cohort-wide analytics', 'Bulk data export', 'Anonymized sessions'],
+      color: colors.researcherMode,
+      icon: icons.researcher,
+    },
+  ];
+
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.logo}>TremorMonitor</Text>
-        <Text style={styles.subtitle}>Parkinson's Disease Management System</Text>
-      </View>
+      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <View style={styles.logoWrap}>
+            <MaterialCommunityIcons name="pulse" size={32} color={colors.primary} />
+          </View>
+          <Text style={[typography.display, { color: colors.textPrimary, marginTop: spacing.md }]}>
+            TremorMonitor
+          </Text>
+          <Text style={[typography.body, { color: colors.textSecondary, textAlign: 'center', marginTop: 4 }]}>
+            Clinical monitoring for Parkinson's care
+          </Text>
+        </View>
 
-      {/* Mode Selection Cards */}
-      <View style={styles.cardsContainer}>
-        {/* Patient Mode */}
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={() => handleModeSelect('patient')}
-        >
-          <Card style={styles.modeCard}>
-            <Card.Content style={styles.cardContent}>
-              <Text style={styles.modeIcon}>👤</Text>
-              <Text style={styles.modeTitle}>Patient Mode</Text>
-              <Text style={styles.modeDescription}>
-                Monitor your tremors, track medication, and view your session history
-              </Text>
-              <View style={styles.featureList}>
-                <Text style={styles.feature}>• Live tremor monitoring</Text>
-                <Text style={styles.feature}>• Session recording</Text>
-                <Text style={styles.feature}>• History & analytics</Text>
-                <Text style={styles.feature}>• Medication tracking</Text>
+        <Text style={[typography.caption, { color: colors.textTertiary, textAlign: 'center', marginBottom: spacing.lg, letterSpacing: 0.5 }]}>
+          SELECT YOUR ROLE TO CONTINUE
+        </Text>
+
+        <View style={{ gap: spacing.md }}>
+          {modes.map((m) => (
+            <TouchableOpacity
+              key={m.id}
+              activeOpacity={0.85}
+              onPress={() => handleModeSelect(m.id)}
+              style={[styles.card, shadows.md]}
+            >
+              <View style={[styles.accentBar, { backgroundColor: m.color }]} />
+              <View style={styles.cardBody}>
+                <View style={styles.cardHeader}>
+                  <View style={[styles.iconWrap, { backgroundColor: m.color + '1A' }]}>
+                    <MaterialCommunityIcons name={m.icon} size={26} color={m.color} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[typography.h2, { color: colors.textPrimary }]}>{m.title}</Text>
+                    <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+                      {m.description}
+                    </Text>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-right" size={22} color={colors.textTertiary} />
+                </View>
+                <View style={styles.features}>
+                  {m.features.map((f, i) => (
+                    <View key={i} style={styles.featureRow}>
+                      <MaterialCommunityIcons name="check" size={14} color={m.color} />
+                      <Text style={[typography.caption, { color: colors.textSecondary, marginLeft: 6 }]}>
+                        {f}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
-            </Card.Content>
-          </Card>
-        </TouchableOpacity>
+            </TouchableOpacity>
+          ))}
+        </View>
 
-        {/* Doctor Mode */}
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={() => handleModeSelect('doctor')}
-        >
-          <Card style={styles.modeCard}>
-            <Card.Content style={styles.cardContent}>
-              <Text style={styles.modeIcon}>👨‍⚕️</Text>
-              <Text style={styles.modeTitle}>Doctor Mode</Text>
-              <Text style={styles.modeDescription}>
-                View patient data, monitor multiple patients, and analyze trends
-              </Text>
-              <View style={styles.featureList}>
-                <Text style={styles.feature}>• Patient dashboard</Text>
-                <Text style={styles.feature}>• Multi-patient monitoring</Text>
-                <Text style={styles.feature}>• Aggregate analytics</Text>
-                <Text style={styles.feature}>• Clinical reports</Text>
-              </View>
-            </Card.Content>
-          </Card>
-        </TouchableOpacity>
-      </View>
-
-      {/* Footer */}
-      <Text style={styles.footer}>
-        SLU Senior Design 2026 • Team: Hamza, Eric, Samir, Sage
-      </Text>
+        <Text style={[typography.small, { color: colors.textTertiary, textAlign: 'center', marginTop: spacing.xxl }]}>
+          SLU Senior Design 2026 · Hamza · Eric · Samir · Sage
+        </Text>
+      </ScrollView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-    padding: 20,
+  container: { flex: 1, backgroundColor: colors.background },
+  scroll: { paddingHorizontal: spacing.lg, paddingTop: spacing.xxxl, paddingBottom: spacing.xl },
+  header: { alignItems: 'center', marginBottom: spacing.xxl },
+  logoWrap: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: colors.primarySoft,
+    alignItems: 'center', justifyContent: 'center',
   },
-  header: {
-    alignItems: 'center',
-    marginTop: 40,
-    marginBottom: 40,
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    flexDirection: 'row',
+    overflow: 'hidden',
   },
-  logo: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#1976D2',
-    marginBottom: 8,
+  accentBar: { width: 4, alignSelf: 'stretch' },
+  cardBody: { flex: 1, padding: spacing.lg },
+  cardHeader: { flexDirection: 'row', alignItems: 'center' },
+  iconWrap: {
+    width: 48, height: 48, borderRadius: 24,
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: spacing.md,
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
+  features: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: 6,
   },
-  cardsContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    gap: 20,
-  },
-  modeCard: {
-    elevation: 4,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-  },
-  cardContent: {
-    padding: 20,
-    alignItems: 'center',
-  },
-  modeIcon: {
-    fontSize: 64,
-    marginBottom: 12,
-  },
-  modeTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 8,
-  },
-  modeDescription: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  featureList: {
-    alignSelf: 'stretch',
-    paddingLeft: 20,
-  },
-  feature: {
-    fontSize: 13,
-    color: '#555',
-    marginBottom: 6,
-  },
-  footer: {
-    textAlign: 'center',
-    fontSize: 12,
-    color: '#999',
-    marginTop: 20,
-    marginBottom: 10,
-  },
+  featureRow: { flexDirection: 'row', alignItems: 'center' },
 });
 
 export default ModeSelection;

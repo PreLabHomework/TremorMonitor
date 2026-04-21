@@ -1,504 +1,286 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Alert,
-  Share,
-  Dimensions,
+  View, Text, StyleSheet, ScrollView, Alert, Share, Dimensions,
 } from 'react-native';
-import { Card, Button, DataTable } from 'react-native-paper';
+import { DataTable } from 'react-native-paper';
 import { LineChart } from 'react-native-chart-kit';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import DatabaseService from '../services/DatabaseService';
+import {
+  Card, PrimaryButton, SecondaryButton, SectionHeader,
+  StatTile, SeverityPill, IconCircle,
+} from '../components/ui';
+import {
+  colors, spacing, radius, typography, shadows, icons,
+  severityColor, severityLabel,
+} from '../theme';
+
+const formatDuration = (s) => {
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}m ${r}s` : `${r}s`;
+};
 
 const SessionDetail = ({ route, navigation }) => {
   const { sessionId } = route.params;
   const [session, setSession] = useState(null);
   const [features, setFeatures] = useState([]);
   const [events, setEvents] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
-  const itemsPerPage = 10;
+  const [loading, setLoading] = useState(true);
+  const rowsPerPage = 10;
 
-  useEffect(() => {
-    loadSessionData();
-  }, [sessionId]);
+  useEffect(() => { load(); }, [sessionId]);
 
-  const loadSessionData = async () => {
+  const load = async () => {
     try {
-      console.log('📊 Loading session details for:', sessionId);
-      
-      const sessionData = await DatabaseService.getSession(sessionId);
-      const sessionFeatures = await DatabaseService.getSessionFeatures(sessionId);
-      const sessionEvents = await DatabaseService.getSessionEvents(sessionId);
-      
-      setSession(sessionData);
-      setFeatures(sessionFeatures);
-      setEvents(sessionEvents);
-      setLoading(false);
-      
-      console.log('✅ Loaded session:', sessionData);
-      console.log('✅ Features:', sessionFeatures.length);
-      console.log('✅ Events:', sessionEvents.length);
-      
-    } catch (error) {
-      console.error('❌ Error loading session:', error);
-      Alert.alert('Error', 'Could not load session data');
+      const [s, f, e] = await Promise.all([
+        DatabaseService.getSession(sessionId),
+        DatabaseService.getSessionFeatures(sessionId),
+        DatabaseService.getSessionEvents(sessionId),
+      ]);
+      setSession(s);
+      setFeatures(f);
+      setEvents(e);
+    } catch (err) {
+      Alert.alert('Error', 'Could not load session');
+    } finally {
       setLoading(false);
     }
   };
 
-  const formatDuration = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    if (mins > 0) {
-      return `${mins}m ${secs}s`;
-    }
-    return `${secs}s`;
-  };
-
-  const getSeverityColor = (amplitude) => {
-    if (amplitude < 0.5) return '#4CAF50';
-    if (amplitude < 1.0) return '#8BC34A';
-    if (amplitude < 2.0) return '#FFC107';
-    if (amplitude < 4.0) return '#FF9800';
-    return '#F44336';
-  };
-
-  const handleExportCSV = async () => {
+  const onExport = async () => {
     try {
-      console.log('📤 Exporting CSV...');
       const csv = await DatabaseService.exportSessionToCSV(sessionId);
-      
-      // Share the CSV data
       await Share.share({
         message: csv,
-        title: `Tremor Session ${sessionId}`,
+        title: `TremorMonitor Session ${sessionId}`,
       });
-      
-      console.log('✅ CSV exported');
-    } catch (error) {
-      console.error('❌ Export error:', error);
-      Alert.alert('Export Error', error.message);
+    } catch (e) {
+      Alert.alert('Export error', e.message);
     }
   };
 
-  const handleDelete = () => {
+  const onDelete = () => {
     Alert.alert(
-      'Delete Session',
-      'Are you sure you want to delete this session? This cannot be undone.',
+      'Delete session?',
+      'This will remove the session and all its data locally. Cloud copies are not affected.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
+        {
+          text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            try {
-              await DatabaseService.deleteSession(sessionId);
-              Alert.alert('Deleted', 'Session deleted successfully');
-              navigation.goBack();
-            } catch (error) {
-              console.error('❌ Delete error:', error);
-              Alert.alert('Error', 'Could not delete session');
-            }
-          }
+            await DatabaseService.deleteSession(sessionId);
+            navigation.goBack();
+          },
         },
       ]
     );
   };
 
-  const prepareChartData = () => {
-    if (features.length === 0) {
-      return {
-        labels: ['No Data'],
-        datasets: [{ data: [0] }],
-      };
+  if (loading || !session) return null;
+
+  const start = new Date(session.start_time);
+  const end = session.end_time ? new Date(session.end_time) : null;
+
+  // Chart — amplitude over session
+  const maxPoints = 12;
+  const step = Math.max(1, Math.floor(features.length / maxPoints));
+  const sampled = features.filter((_, i) => i % step === 0);
+  const chartLabels = sampled.map((f, i) => {
+    if (i === 0 || i === sampled.length - 1 || i === Math.floor(sampled.length / 2)) {
+      return new Date(f.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
+    return '';
+  });
+  const chartData = sampled.map((f) => f.amplitude);
+  const hasChartData = chartData.length > 1;
 
-    // Sample data points if too many (max 10 points for readability)
-    const maxPoints = 10;
-    const step = Math.max(1, Math.floor(features.length / maxPoints));
-    
-    const sampledFeatures = features.filter((_, index) => index % step === 0);
-    
-    const labels = sampledFeatures.map((f, index) => {
-      const time = new Date(f.timestamp);
-      return time.toLocaleTimeString('en-US', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      });
-    });
-    
-    const frequencyData = sampledFeatures.map(f => f.frequency);
-    
-    return {
-      labels,
-      datasets: [
-        {
-          data: frequencyData,
-          color: (opacity = 1) => `rgba(33, 150, 243, ${opacity})`,
-          strokeWidth: 2,
-        },
-      ],
-    };
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingText}>Loading session...</Text>
-      </View>
-    );
-  }
-
-  if (!session) {
-    return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>Session not found</Text>
-        <Button onPress={() => navigation.goBack()}>Go Back</Button>
-      </View>
-    );
-  }
-
-  const startDate = new Date(session.start_time);
-  const endDate = session.end_time ? new Date(session.end_time) : null;
-  const chartData = prepareChartData();
-  
-  const from = page * itemsPerPage;
-  const to = Math.min((page + 1) * itemsPerPage, features.length);
+  const pageStart = page * rowsPerPage;
+  const pageEnd = Math.min(pageStart + rowsPerPage, features.length);
 
   return (
-    <ScrollView style={styles.container}>
-      {/* Header Card */}
-      <Card style={styles.headerCard}>
-        <Card.Content>
-          <Text style={styles.sessionTitle}>
-            Session {sessionId}
-          </Text>
-          <Text style={styles.sessionDate}>
-            {startDate.toLocaleDateString('en-US', { 
-              weekday: 'long', 
-              year: 'numeric', 
-              month: 'long', 
-              day: 'numeric' 
-            })}
-          </Text>
-          <Text style={styles.sessionTime}>
-            {startDate.toLocaleTimeString()} - {endDate ? endDate.toLocaleTimeString() : 'In Progress'}
-          </Text>
-        </Card.Content>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* Header */}
+      <Card style={[styles.headerCard, { backgroundColor: colors.primary }]}>
+        <Text style={[typography.small, { color: colors.primaryLight, letterSpacing: 1 }]}>
+          SESSION {session.id}
+        </Text>
+        <Text style={[typography.h1, { color: colors.textOnPrimary, marginTop: 4 }]}>
+          {start.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+        </Text>
+        <Text style={[typography.body, { color: colors.primaryLight, marginTop: 2 }]}>
+          {start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          {end && ` — ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+        </Text>
+        <View style={{ marginTop: spacing.md }}>
+          <SeverityPill severity={session.max_severity} />
+        </View>
       </Card>
 
-      {/* Summary Stats Card */}
-      <Card style={styles.card}>
-        <Card.Content>
-          <Text style={styles.cardTitle}>Summary Statistics</Text>
-          
-          <View style={styles.statsGrid}>
-            <View style={styles.statBox}>
-              <Text style={styles.statValue}>{formatDuration(session.total_duration)}</Text>
-              <Text style={styles.statLabel}>Total Duration</Text>
-            </View>
-            
-            <View style={styles.statBox}>
-              <Text style={styles.statValue}>{session.episode_count}</Text>
-              <Text style={styles.statLabel}>Tremor Episodes</Text>
-            </View>
+      {/* Stats row 1 */}
+      <View style={{ marginTop: spacing.lg }}>
+        <Card>
+          <View style={styles.metrics}>
+            <StatTile
+              value={formatDuration(session.total_duration)}
+              label="Duration"
+              icon={icons.duration}
+              color={colors.primary}
+            />
+            <StatTile
+              value={session.tremor_count}
+              label="Tremors"
+              icon={icons.count}
+              color={colors.primary}
+            />
           </View>
-
-          <View style={styles.statsGrid}>
-            <View style={styles.statBox}>
-              <Text style={[styles.statValue, { color: getSeverityColor(session.peak_amplitude) }]}>
-                {session.peak_amplitude.toFixed(2)}
-              </Text>
-              <Text style={styles.statLabel}>Peak Amplitude (m/s²)</Text>
-            </View>
-            
-            <View style={styles.statBox}>
-              <Text style={styles.statValue}>{session.avg_frequency.toFixed(1)}</Text>
-              <Text style={styles.statLabel}>Avg Frequency (Hz)</Text>
-            </View>
+          <View style={[styles.metrics, { marginTop: spacing.lg }]}>
+            <StatTile
+              value={session.peak_amplitude.toFixed(2)}
+              label="Peak m/s²"
+              icon={icons.amplitude}
+              color={severityColor(session.max_severity)}
+            />
+            <StatTile
+              value={session.avg_amplitude.toFixed(2)}
+              label="Avg m/s² (tremor)"
+              icon={icons.amplitude}
+              color={colors.textPrimary}
+            />
           </View>
-        </Card.Content>
-      </Card>
+        </Card>
+      </View>
 
-      {/* Frequency Chart */}
-      {features.length > 0 && (
-        <Card style={styles.card}>
-          <Card.Content>
-            <Text style={styles.cardTitle}>Frequency Over Time</Text>
+      {/* Amplitude chart */}
+      {hasChartData && (
+        <View style={{ marginTop: spacing.lg }}>
+          <SectionHeader title="Amplitude Over Time" />
+          <Card padding={spacing.sm}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <LineChart
-                data={chartData}
-                width={Math.max(Dimensions.get('window').width - 64, chartData.labels.length * 60)}
-                height={220}
+                data={{
+                  labels: chartLabels,
+                  datasets: [{ data: chartData }],
+                }}
+                width={Math.max(Dimensions.get('window').width - 64, chartData.length * 50)}
+                height={200}
                 chartConfig={{
-                  backgroundColor: '#ffffff',
-                  backgroundGradientFrom: '#ffffff',
-                  backgroundGradientTo: '#ffffff',
-                  decimalPlaces: 1,
-                  color: (opacity = 1) => `rgba(33, 150, 243, ${opacity})`,
-                  labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-                  style: {
-                    borderRadius: 16,
-                  },
+                  backgroundGradientFrom: colors.surface,
+                  backgroundGradientTo: colors.surface,
+                  decimalPlaces: 2,
+                  color: (o = 1) => `rgba(20, 184, 166, ${o})`,
+                  labelColor: (o = 1) => `rgba(100, 116, 139, ${o})`,
                   propsForDots: {
                     r: '4',
                     strokeWidth: '2',
-                    stroke: '#2196F3',
+                    stroke: colors.primary,
+                  },
+                  propsForBackgroundLines: {
+                    stroke: colors.border,
+                    strokeDasharray: '3',
                   },
                 }}
                 bezier
-                style={styles.chart}
-                yAxisLabel=""
-                yAxisSuffix=" Hz"
+                withInnerLines
+                withOuterLines={false}
+                yAxisSuffix=" m/s²"
+                style={{ paddingRight: 0 }}
               />
             </ScrollView>
-            <Text style={styles.chartCaption}>
-              Tremor frequency measurements throughout the session
-            </Text>
-          </Card.Content>
-        </Card>
+          </Card>
+        </View>
       )}
 
-      {/* Raw Data Table */}
+      {/* Tremor events */}
+      {events.length > 0 && (
+        <View style={{ marginTop: spacing.lg }}>
+          <SectionHeader title={`Tremor Events (${events.length})`} />
+          <Card padding={0}>
+            {events.map((ev, i) => (
+              <View
+                key={ev.id}
+                style={[
+                  styles.eventRow,
+                  i < events.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
+                ]}
+              >
+                <IconCircle icon={icons.tremor} color={colors.accent} size={36} iconSize={16} />
+                <View style={{ flex: 1, marginLeft: spacing.md }}>
+                  <Text style={[typography.bodyMedium, { color: colors.textPrimary }]}>
+                    Event #{i + 1} — {ev.duration}s
+                  </Text>
+                  <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+                    Peak {ev.peak_amplitude.toFixed(2)} m/s² · {new Date(ev.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </Card>
+        </View>
+      )}
+
+      {/* Raw data */}
       {features.length > 0 && (
-        <Card style={styles.card}>
-          <Card.Content>
-            <Text style={styles.cardTitle}>Raw Data</Text>
-            
+        <View style={{ marginTop: spacing.lg }}>
+          <SectionHeader title="Packet Data" />
+          <Card padding={0}>
             <DataTable>
               <DataTable.Header>
                 <DataTable.Title>Time</DataTable.Title>
-                <DataTable.Title numeric>Freq (Hz)</DataTable.Title>
-                <DataTable.Title numeric>Amp (m/s²)</DataTable.Title>
+                <DataTable.Title numeric>Amplitude</DataTable.Title>
                 <DataTable.Title numeric>Severity</DataTable.Title>
               </DataTable.Header>
-
-              {features.slice(from, to).map((feature) => {
-                const time = new Date(feature.timestamp);
+              {features.slice(pageStart, pageEnd).map((f) => {
+                const t = new Date(f.timestamp);
                 return (
-                  <DataTable.Row key={feature.id}>
+                  <DataTable.Row key={f.id}>
                     <DataTable.Cell>
-                      {time.toLocaleTimeString('en-US', { 
-                        hour: '2-digit', 
-                        minute: '2-digit',
-                        second: '2-digit'
-                      })}
+                      {t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </DataTable.Cell>
-                    <DataTable.Cell numeric>{feature.frequency.toFixed(1)}</DataTable.Cell>
-                    <DataTable.Cell numeric>{feature.amplitude.toFixed(2)}</DataTable.Cell>
-                    <DataTable.Cell numeric>{feature.severity}/4</DataTable.Cell>
+                    <DataTable.Cell numeric>{f.amplitude.toFixed(2)}</DataTable.Cell>
+                    <DataTable.Cell numeric>
+                      {f.tremor_detected ? `${f.severity}/4` : '—'}
+                    </DataTable.Cell>
                   </DataTable.Row>
                 );
               })}
-
               <DataTable.Pagination
                 page={page}
-                numberOfPages={Math.ceil(features.length / itemsPerPage)}
+                numberOfPages={Math.ceil(features.length / rowsPerPage)}
                 onPageChange={setPage}
-                label={`${from + 1}-${to} of ${features.length}`}
-                showFastPaginationControls
-                numberOfItemsPerPage={itemsPerPage}
+                label={`${pageStart + 1}–${pageEnd} of ${features.length}`}
+                numberOfItemsPerPage={rowsPerPage}
               />
             </DataTable>
-          </Card.Content>
-        </Card>
+          </Card>
+        </View>
       )}
 
-      {/* Tremor Events */}
-      {events.length > 0 && (
-        <Card style={styles.card}>
-          <Card.Content>
-            <Text style={styles.cardTitle}>Tremor Events ({events.length})</Text>
-            
-            {events.map((event, index) => {
-              const startTime = new Date(event.start_time);
-              return (
-                <View key={event.id} style={styles.eventItem}>
-                  <View style={styles.eventHeader}>
-                    <Text style={styles.eventNumber}>Event #{index + 1}</Text>
-                    <Text style={styles.eventTime}>
-                      {startTime.toLocaleTimeString('en-US', { 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
-                      })}
-                    </Text>
-                  </View>
-                  <View style={styles.eventDetails}>
-                    <Text style={styles.eventDetail}>
-                      Duration: {event.duration}s
-                    </Text>
-                    <Text style={styles.eventDetail}>
-                      Peak: {event.peak_amplitude.toFixed(2)} m/s²
-                    </Text>
-                    <Text style={styles.eventDetail}>
-                      Freq: {event.dominant_frequency.toFixed(1)} Hz
-                    </Text>
-                  </View>
-                </View>
-              );
-            })}
-          </Card.Content>
-        </Card>
-      )}
-
-      {/* Action Buttons */}
-      <View style={styles.actions}>
-        <Button 
-          mode="contained" 
-          onPress={handleExportCSV}
-          style={styles.actionButton}
-          icon="download"
-        >
-          Export CSV
-        </Button>
-        
-        <Button 
-          mode="outlined" 
-          onPress={handleDelete}
-          style={styles.actionButton}
-          textColor="#F44336"
-          icon="delete"
-        >
-          Delete Session
-        </Button>
+      {/* Actions */}
+      <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
+        <PrimaryButton label="Export as CSV" icon={icons.export} onPress={onExport} />
+        <SecondaryButton
+          label="Delete Session"
+          icon={icons.delete}
+          color={colors.error}
+          onPress={onDelete}
+        />
       </View>
-
-      <View style={styles.bottomSpacer} />
     </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    fontSize: 16,
-    color: '#666',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  errorText: {
-    fontSize: 18,
-    color: '#666',
-    marginBottom: 16,
-  },
-  headerCard: {
-    margin: 16,
-    marginBottom: 8,
-    backgroundColor: '#1976D2',
-  },
-  sessionTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 4,
-  },
-  sessionDate: {
-    fontSize: 16,
-    color: '#fff',
-    marginBottom: 2,
-  },
-  sessionTime: {
-    fontSize: 14,
-    color: '#E3F2FD',
-  },
-  card: {
-    margin: 16,
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#333',
-  },
-  statsGrid: {
+  container: { flex: 1, backgroundColor: colors.background },
+  content: { padding: spacing.lg, paddingBottom: spacing.xxxl },
+  headerCard: { paddingVertical: spacing.xl },
+  metrics: { flexDirection: 'row', gap: spacing.md },
+  eventRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  statBox: {
-    flex: 1,
     alignItems: 'center',
-    padding: 12,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-    marginHorizontal: 4,
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1976D2',
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-  },
-  chart: {
-    marginVertical: 8,
-    borderRadius: 16,
-  },
-  chartCaption: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 8,
-    fontStyle: 'italic',
-  },
-  eventItem: {
-    backgroundColor: '#f9f9f9',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  eventHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  eventNumber: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  eventTime: {
-    fontSize: 14,
-    color: '#666',
-  },
-  eventDetails: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  eventDetail: {
-    fontSize: 13,
-    color: '#666',
-  },
-  actions: {
-    margin: 16,
-    marginTop: 8,
-  },
-  actionButton: {
-    marginBottom: 12,
-  },
-  bottomSpacer: {
-    height: 32,
+    padding: spacing.md,
   },
 });
 

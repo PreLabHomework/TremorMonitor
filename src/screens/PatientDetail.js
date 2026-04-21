@@ -1,325 +1,284 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, Alert,
 } from 'react-native';
-import { Card, Avatar, Chip } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import FirebaseService from '../services/FirebaseService';
 import DatabaseService from '../services/DatabaseService';
+import {
+  Card, SectionHeader, IconCircle, Pill, StatTile, SeverityPill, EmptyState, Divider,
+} from '../components/ui';
+import {
+  colors, spacing, radius, typography, shadows, icons,
+  severityColor, severityLabel,
+} from '../theme';
+
+const initials = (name) => {
+  if (!name) return '?';
+  const parts = name.trim().split(' ');
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+};
+
+const formatDuration = (s) => {
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}m ${r}s` : `${r}s`;
+};
 
 const PatientDetail = ({ route }) => {
   const { patientId, patientName } = route.params;
   const navigation = useNavigation();
+  const [patient, setPatient] = useState(null);
   const [sessions, setSessions] = useState([]);
-  const [patientStats, setPatientStats] = useState({
-    totalSessions: 0,
-    avgSeverity: 0,
-    totalEpisodes: 0,
-    peakAmplitude: 0,
-  });
+  const [medLogs, setMedLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadPatientData();
-  }, []);
+  useEffect(() => { load(); }, [patientId]);
 
-  const loadPatientData = async () => {
+  const load = async () => {
     try {
-      // In real app, filter by patient ID
-      // For MVP, showing all sessions as if they're from this patient
-      const allSessions = await DatabaseService.getAllSessions();
-      
-      setSessions(allSessions);
-      
-      // Calculate stats
-      const total = allSessions.length;
-      const avgSev = total > 0
-        ? allSessions.reduce((sum, s) => sum + (s.peak_amplitude / 4 * 4), 0) / total
-        : 0;
-      const episodes = allSessions.reduce((sum, s) => sum + s.episode_count, 0);
-      const peak = Math.max(...allSessions.map(s => s.peak_amplitude), 0);
-      
-      setPatientStats({
-        totalSessions: total,
-        avgSeverity: avgSev,
-        totalEpisodes: episodes,
-        peakAmplitude: peak,
-      });
-      
-    } catch (error) {
-      console.error('❌ Error loading patient data:', error);
+      // Get patient profile from Firebase (source of truth for sharing prefs)
+      const allPatients = await FirebaseService.getAllPatients();
+      const p = allPatients.find(x => x.id === patientId);
+      setPatient(p);
+
+      const sess = await FirebaseService.getSessionsForPatient(patientId);
+      setSessions(sess);
+
+      if (p?.doctor_sharing) {
+        const logs = await FirebaseService.getMedicationLogsForPatient(patientId);
+        setMedLogs(logs);
+      } else {
+        setMedLogs([]);
+      }
+    } catch (e) {
+      console.error('PatientDetail load error:', e);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const getSeverityColor = (amplitude) => {
-    if (amplitude < 0.5) return '#4CAF50';
-    if (amplitude < 1.0) return '#8BC34A';
-    if (amplitude < 2.0) return '#FFC107';
-    if (amplitude < 4.0) return '#FF9800';
-    return '#F44336';
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
   };
 
-  const getSeverityLabel = (amplitude) => {
-    if (amplitude < 0.5) return 'Mild';
-    if (amplitude < 1.0) return 'Light';
-    if (amplitude < 2.0) return 'Moderate';
-    if (amplitude < 4.0) return 'Strong';
-    return 'Severe';
+  const onDeletePatient = () => {
+    Alert.alert(
+      'Remove patient?',
+      `This will remove ${patientName} from the registry. Their session data will remain in Firebase but won't show in the patient list.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            await FirebaseService.deletePatient(patientId);
+            await DatabaseService.deletePatient(patientId);
+            navigation.goBack();
+          },
+        },
+      ]
+    );
   };
 
-  const formatDuration = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    return `${mins}m`;
-  };
+  if (loading || !patient) return null;
 
-  const getInitials = (name) => {
-    return name
-      .split(' ')
-      .map(n => n[0])
-      .join('')
-      .toUpperCase();
-  };
+  // Aggregate stats
+  const totalSessions = sessions.length;
+  const totalTremors = sessions.reduce((sum, s) => sum + (s.tremor_count || 0), 0);
+  const totalMinutes = Math.floor(sessions.reduce((sum, s) => sum + (s.total_duration || 0), 0) / 60);
+  const avgSeverity = totalSessions > 0
+    ? Math.round(sessions.reduce((sum, s) => sum + (s.max_severity || 0), 0) / totalSessions)
+    : 0;
 
   return (
-    <ScrollView style={styles.container}>
-      {/* Patient Header */}
-      <Card style={styles.headerCard}>
-        <Card.Content style={styles.headerContent}>
-          <Avatar.Text
-            size={72}
-            label={getInitials(patientName)}
-            style={styles.avatar}
-          />
-          <View style={styles.headerInfo}>
-            <Text style={styles.patientName}>{patientName}</Text>
-            <Text style={styles.patientId}>ID: {patientId}</Text>
-            <Chip style={styles.activeChip} textStyle={styles.activeText}>
-              Active Patient
-            </Chip>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+    >
+      {/* Profile card */}
+      <Card>
+        <View style={styles.profileHeader}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initials(patient.name)}</Text>
           </View>
-        </Card.Content>
+          <View style={{ flex: 1, marginLeft: spacing.md }}>
+            <Text style={[typography.h2, { color: colors.textPrimary }]}>{patient.name}</Text>
+            <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+              {patient.age ? `Age ${patient.age}` : 'Age not set'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
+              {patient.doctor_sharing && <Pill label="Sharing enabled" color={colors.success} icon={icons.check} />}
+              {patient.research_sharing && <Pill label="Research" color={colors.researcherMode} icon={icons.researcher} />}
+            </View>
+          </View>
+        </View>
+        {patient.notes ? (
+          <>
+            <Divider style={{ marginVertical: spacing.md }} />
+            <Text style={[typography.small, { color: colors.textTertiary, letterSpacing: 0.5, marginBottom: 4 }]}>
+              NOTES
+            </Text>
+            <Text style={[typography.body, { color: colors.textPrimary }]}>
+              {patient.notes}
+            </Text>
+          </>
+        ) : null}
       </Card>
 
-      {/* Stats Overview */}
-      <Card style={styles.card}>
-        <Card.Content>
-          <Text style={styles.sectionTitle}>Overall Statistics</Text>
-          
-          <View style={styles.statsGrid}>
-            <View style={styles.statBox}>
-              <Text style={styles.statValue}>{patientStats.totalSessions}</Text>
-              <Text style={styles.statLabel}>Total Sessions</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Text style={styles.statValue}>{patientStats.avgSeverity.toFixed(1)}</Text>
-              <Text style={styles.statLabel}>Avg Severity</Text>
-            </View>
+      {/* Aggregate stats */}
+      <View style={{ marginTop: spacing.lg }}>
+        <SectionHeader title="Overview" />
+        <Card>
+          <View style={styles.statsRow}>
+            <StatTile value={totalSessions} label="Sessions" icon={icons.history} color={colors.textPrimary} />
+            <StatTile value={totalTremors} label="Tremors" icon={icons.count} color={colors.textPrimary} />
           </View>
-
-          <View style={styles.statsGrid}>
-            <View style={styles.statBox}>
-              <Text style={styles.statValue}>{patientStats.totalEpisodes}</Text>
-              <Text style={styles.statLabel}>Total Episodes</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Text style={[styles.statValue, { color: getSeverityColor(patientStats.peakAmplitude) }]}>
-                {patientStats.peakAmplitude.toFixed(1)}
+          <View style={[styles.statsRow, { marginTop: spacing.lg }]}>
+            <StatTile value={`${totalMinutes}m`} label="Recorded" icon={icons.duration} color={colors.textPrimary} />
+            <View style={{ flex: 1 }}>
+              <Text style={[typography.small, { color: colors.textTertiary, letterSpacing: 0.5, marginBottom: 4 }]}>
+                AVG SEVERITY
               </Text>
-              <Text style={styles.statLabel}>Peak Amplitude</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <SeverityPill severity={avgSeverity} />
+              </View>
             </View>
           </View>
-        </Card.Content>
-      </Card>
+        </Card>
+      </View>
 
-      {/* Recent Sessions */}
-      <Card style={styles.card}>
-        <Card.Content>
-          <Text style={styles.sectionTitle}>
-            Recent Sessions ({sessions.length})
-          </Text>
-          
-          {sessions.length === 0 ? (
-            <Text style={styles.emptyText}>No sessions recorded</Text>
-          ) : (
-            sessions.slice(0, 10).map((session) => {
-              const startDate = new Date(session.start_time);
-              const severityColor = getSeverityColor(session.peak_amplitude);
-              const severityLabel = getSeverityLabel(session.peak_amplitude);
-              
+      {/* Sessions */}
+      <View style={{ marginTop: spacing.lg }}>
+        <SectionHeader title={`Sessions (${sessions.length})`} />
+        {sessions.length === 0 ? (
+          <Card>
+            <Text style={[typography.body, { color: colors.textSecondary, textAlign: 'center' }]}>
+              This patient hasn't recorded any sessions yet.
+            </Text>
+          </Card>
+        ) : (
+          <Card padding={0}>
+            {sessions.slice(0, 10).map((s, i) => {
+              const start = new Date(s.start_time);
               return (
                 <TouchableOpacity
-                  key={session.id}
-                  onPress={() => navigation.navigate('SessionDetail', { sessionId: session.id })}
-                  activeOpacity={0.7}
+                  key={s.id}
+                  onPress={() => navigation.navigate('SessionDetail', { sessionId: s.local_session_id })}
+                  style={[
+                    styles.sessionRow,
+                    i < Math.min(sessions.length, 10) - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
+                  ]}
                 >
-                  <View style={styles.sessionItem}>
-                    <View style={styles.sessionHeader}>
-                      <Text style={styles.sessionDate}>
-                        {startDate.toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                        })}
+                  <IconCircle
+                    icon={icons.tremor}
+                    color={severityColor(s.max_severity || 0)}
+                    size={40}
+                  />
+                  <View style={{ flex: 1, marginLeft: spacing.md }}>
+                    <Text style={[typography.bodyMedium, { color: colors.textPrimary }]}>
+                      {start.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+                    </Text>
+                    <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+                      {s.tremor_count || 0} tremors · {formatDuration(s.total_duration || 0)} · peak {(s.peak_amplitude || 0).toFixed(2)}
+                    </Text>
+                  </View>
+                  <SeverityPill severity={s.max_severity || 0} />
+                </TouchableOpacity>
+              );
+            })}
+          </Card>
+        )}
+      </View>
+
+      {/* Medication log */}
+      {patient.doctor_sharing && (
+        <View style={{ marginTop: spacing.lg }}>
+          <SectionHeader title={`Medication Log (${medLogs.length})`} />
+          {medLogs.length === 0 ? (
+            <Card>
+              <Text style={[typography.body, { color: colors.textSecondary, textAlign: 'center' }]}>
+                No medications recorded.
+              </Text>
+            </Card>
+          ) : (
+            <Card padding={0}>
+              {medLogs.slice(0, 15).map((log, i) => {
+                const t = new Date(log.timestamp);
+                return (
+                  <View
+                    key={log.id}
+                    style={[
+                      styles.logRow,
+                      i < Math.min(medLogs.length, 15) - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
+                    ]}
+                  >
+                    <IconCircle
+                      icon={log.trigger_type === 'auto' ? 'auto-fix' : 'gesture-tap'}
+                      color={log.trigger_type === 'auto' ? colors.accent : colors.primary}
+                      size={36}
+                      iconSize={16}
+                    />
+                    <View style={{ flex: 1, marginLeft: spacing.md }}>
+                      <Text style={[typography.bodyMedium, { color: colors.textPrimary }]}>
+                        {log.pill_count} pill{log.pill_count > 1 ? 's' : ''} · {log.trigger_type}
                       </Text>
-                      <Text style={styles.sessionTime}>
-                        {startDate.toLocaleTimeString('en-US', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </Text>
-                      <Chip
-                        style={[styles.severityChip, { backgroundColor: severityColor }]}
-                        textStyle={styles.severityText}
-                      >
-                        {severityLabel}
-                      </Chip>
-                    </View>
-                    
-                    <View style={styles.sessionStats}>
-                      <Text style={styles.sessionStat}>
-                        {formatDuration(session.total_duration)}
-                      </Text>
-                      <Text style={styles.sessionStat}>
-                        {session.episode_count} episodes
-                      </Text>
-                      <Text style={styles.sessionStat}>
-                        {session.peak_amplitude.toFixed(1)} m/s²
+                      <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+                        {t.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </Text>
                     </View>
                   </View>
-                </TouchableOpacity>
-              );
-            })
+                );
+              })}
+            </Card>
           )}
-        </Card.Content>
-      </Card>
+        </View>
+      )}
 
-      <View style={styles.bottomSpacer} />
+      {/* Danger zone */}
+      <View style={{ marginTop: spacing.xl }}>
+        <TouchableOpacity onPress={onDeletePatient} style={styles.dangerBtn}>
+          <MaterialCommunityIcons name={icons.delete} size={18} color={colors.error} />
+          <Text style={[typography.bodyMedium, { color: colors.error, marginLeft: 8 }]}>
+            Remove Patient
+          </Text>
+        </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  headerCard: {
-    margin: 16,
-    marginBottom: 8,
-    backgroundColor: '#1976D2',
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-  },
+  container: { flex: 1, backgroundColor: colors.background },
+  content: { padding: spacing.lg, paddingBottom: spacing.xxxl },
+  profileHeader: { flexDirection: 'row', alignItems: 'center' },
   avatar: {
-    backgroundColor: '#fff',
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: colors.doctorMode + '1A',
+    alignItems: 'center', justifyContent: 'center',
   },
-  headerInfo: {
-    flex: 1,
-    marginLeft: 16,
-  },
-  patientName: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 4,
-  },
-  patientId: {
-    fontSize: 14,
-    color: '#E3F2FD',
-    marginBottom: 8,
-  },
-  activeChip: {
-    backgroundColor: '#4CAF50',
-    alignSelf: 'flex-start',
-  },
-  activeText: {
-    color: '#fff',
-    fontSize: 12,
-  },
-  card: {
-    margin: 16,
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 16,
-  },
-  statsGrid: {
+  avatarText: { fontSize: 22, fontWeight: '700', color: colors.doctorMode },
+  statsRow: { flexDirection: 'row', gap: spacing.md },
+  sessionRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  statBox: {
-    flex: 1,
     alignItems: 'center',
-    padding: 12,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-    marginHorizontal: 4,
+    padding: spacing.md,
   },
-  statValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1976D2',
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  sessionItem: {
-    padding: 12,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  sessionHeader: {
+  logRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    padding: spacing.md,
   },
-  sessionDate: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  sessionTime: {
-    fontSize: 14,
-    color: '#666',
-  },
-  severityChip: {
-    height: 24,
-  },
-  severityText: {
-    color: '#fff',
-    fontSize: 11,
-  },
-  sessionStats: {
+  dangerBtn: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  sessionStat: {
-    fontSize: 13,
-    color: '#666',
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
-    paddingVertical: 20,
-  },
-  bottomSpacer: {
-    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.md,
   },
 });
 

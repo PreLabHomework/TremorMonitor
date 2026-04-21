@@ -1,384 +1,214 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  RefreshControl,
+  View, Text, StyleSheet, FlatList, RefreshControl,
 } from 'react-native';
-import { Card, Searchbar, Chip } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import { Searchbar } from 'react-native-paper';
 import DatabaseService from '../services/DatabaseService';
+import {
+  Card, SeverityPill, EmptyState, StatTile, IconCircle,
+} from '../components/ui';
+import {
+  colors, spacing, radius, typography, shadows, icons,
+  severityColor,
+} from '../theme';
+
+const formatDuration = (s) => {
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}m ${r}s` : `${r}s`;
+};
+
+const getWeekLabel = (iso) => {
+  const d = new Date(iso);
+  const now = new Date();
+  const diffDays = Math.floor((now - d) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return 'This Week';
+  if (diffDays < 14) return 'Last Week';
+  if (diffDays < 30) return 'This Month';
+  return d.toLocaleDateString([], { month: 'long', year: 'numeric' });
+};
+
+const groupByWeek = (sessions) => {
+  const map = {};
+  for (const s of sessions) {
+    const key = getWeekLabel(s.start_time);
+    (map[key] = map[key] || []).push(s);
+  }
+  return Object.keys(map).map((k) => ({ label: k, sessions: map[k] }));
+};
 
 const History = () => {
   const navigation = useNavigation();
   const [sessions, setSessions] = useState([]);
-  const [filteredSessions, setFilteredSessions] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
+  const [filtered, setFiltered] = useState([]);
+  const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Load sessions when screen comes into focus
   useFocusEffect(
-    React.useCallback(() => {
-      loadSessions();
-    }, [])
+    useCallback(() => { load(); }, [])
   );
 
-  const loadSessions = async () => {
+  const load = async () => {
     try {
-      console.log('📋 Loading sessions...');
-      const allSessions = await DatabaseService.getAllSessions();
-      console.log('✅ Loaded sessions:', allSessions.length);
-      
-      setSessions(allSessions);
-      setFilteredSessions(allSessions);
-      setLoading(false);
-    } catch (error) {
-      console.error('❌ Error loading sessions:', error);
+      const pid = await DatabaseService.getSetting('active_patient_id', null);
+      const data = await DatabaseService.getAllSessions(pid);
+      setSessions(data);
+      setFiltered(data);
+    } finally {
       setLoading(false);
     }
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadSessions();
+    await load();
     setRefreshing(false);
   };
 
-  const handleSearch = (query) => {
-    setSearchQuery(query);
-    
-    if (query.trim() === '') {
-      setFilteredSessions(sessions);
-    } else {
-      const filtered = sessions.filter(session => {
-        const date = new Date(session.start_time).toLocaleDateString().toLowerCase();
-        const time = new Date(session.start_time).toLocaleTimeString().toLowerCase();
-        const notes = (session.notes || '').toLowerCase();
-        const searchLower = query.toLowerCase();
-        
-        return date.includes(searchLower) || 
-               time.includes(searchLower) || 
-               notes.includes(searchLower);
-      });
-      setFilteredSessions(filtered);
-    }
-  };
-
-  const getSeverityColor = (peakAmplitude) => {
-    if (peakAmplitude < 0.5) return '#4CAF50'; // Green - mild
-    if (peakAmplitude < 1.0) return '#8BC34A'; // Light green
-    if (peakAmplitude < 2.0) return '#FFC107'; // Yellow - moderate
-    if (peakAmplitude < 4.0) return '#FF9800'; // Orange
-    return '#F44336'; // Red - severe
-  };
-
-  const getSeverityLabel = (peakAmplitude) => {
-    if (peakAmplitude < 0.5) return 'Mild';
-    if (peakAmplitude < 1.0) return 'Light';
-    if (peakAmplitude < 2.0) return 'Moderate';
-    if (peakAmplitude < 4.0) return 'Strong';
-    return 'Severe';
-  };
-
-  const formatDuration = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
-  };
-
-  const getWeekLabel = (dateString) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffTime = now - date;
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return 'This Week';
-    if (diffDays < 14) return 'Last Week';
-    if (diffDays < 30) return 'This Month';
-    
-    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  };
-
-  const groupSessionsByWeek = () => {
-    const grouped = {};
-    
-    filteredSessions.forEach(session => {
-      const weekLabel = getWeekLabel(session.start_time);
-      if (!grouped[weekLabel]) {
-        grouped[weekLabel] = [];
-      }
-      grouped[weekLabel].push(session);
-    });
-    
-    return Object.keys(grouped).map(weekLabel => ({
-      week: weekLabel,
-      sessions: grouped[weekLabel],
+  const onSearch = (text) => {
+    setQ(text);
+    if (!text.trim()) { setFiltered(sessions); return; }
+    const lower = text.toLowerCase();
+    setFiltered(sessions.filter((s) => {
+      return (
+        new Date(s.start_time).toLocaleDateString().toLowerCase().includes(lower) ||
+        new Date(s.start_time).toLocaleTimeString().toLowerCase().includes(lower) ||
+        (s.notes || '').toLowerCase().includes(lower)
+      );
     }));
   };
 
-  const renderSessionCard = ({ item }) => {
-    const startDate = new Date(item.start_time);
-    const severityColor = getSeverityColor(item.peak_amplitude);
-    const severityLabel = getSeverityLabel(item.peak_amplitude);
-    
+  const renderSession = (s) => {
+    const start = new Date(s.start_time);
     return (
-      <TouchableOpacity
-        onPress={() => navigation.navigate('SessionDetail', { sessionId: item.id })}
-        activeOpacity={0.7}
+      <Card
+        key={s.id}
+        onPress={() => navigation.navigate('SessionDetail', { sessionId: s.id })}
+        style={{ marginBottom: spacing.sm }}
       >
-        <Card style={styles.sessionCard}>
-          <Card.Content>
-            <View style={styles.sessionHeader}>
-              <View style={styles.dateTimeContainer}>
-                <Text style={styles.sessionDate}>
-                  {startDate.toLocaleDateString('en-US', { 
-                    weekday: 'short', 
-                    month: 'short', 
-                    day: 'numeric' 
-                  })}
-                </Text>
-                <Text style={styles.sessionTime}>
-                  {startDate.toLocaleTimeString('en-US', { 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })}
-                </Text>
-              </View>
-              
-              <Chip 
-                style={[styles.severityChip, { backgroundColor: severityColor }]}
-                textStyle={styles.severityText}
-              >
-                {severityLabel}
-              </Chip>
-            </View>
+        <View style={styles.row}>
+          <IconCircle
+            icon={icons.tremor}
+            color={severityColor(s.max_severity)}
+            size={44}
+            iconSize={22}
+          />
+          <View style={{ flex: 1, marginLeft: spacing.md }}>
+            <Text style={[typography.h3, { color: colors.textPrimary }]}>
+              {start.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+            </Text>
+            <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+              {start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+          </View>
+          <SeverityPill severity={s.max_severity} />
+        </View>
 
-            <View style={styles.statsRow}>
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>{formatDuration(item.total_duration)}</Text>
-                <Text style={styles.statLabel}>Duration</Text>
-              </View>
-              
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>{item.episode_count}</Text>
-                <Text style={styles.statLabel}>Episodes</Text>
-              </View>
-              
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>{item.peak_amplitude.toFixed(1)}</Text>
-                <Text style={styles.statLabel}>Peak (m/s²)</Text>
-              </View>
-              
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>{item.avg_frequency.toFixed(1)}</Text>
-                <Text style={styles.statLabel}>Avg Hz</Text>
-              </View>
-            </View>
-
-            {item.notes && (
-              <Text style={styles.notes} numberOfLines={2}>
-                {item.notes}
-              </Text>
-            )}
-          </Card.Content>
-        </Card>
-      </TouchableOpacity>
+        <View style={styles.metrics}>
+          <StatTile
+            value={formatDuration(s.total_duration)}
+            label="Duration"
+            color={colors.textPrimary}
+          />
+          <StatTile
+            value={s.tremor_count}
+            label="Tremors"
+            color={colors.textPrimary}
+          />
+          <StatTile
+            value={s.peak_amplitude.toFixed(2)}
+            label="Peak m/s²"
+            color={colors.textPrimary}
+          />
+        </View>
+      </Card>
     );
   };
 
-  const renderWeekSection = ({ item }) => (
-    <View style={styles.weekSection}>
-      <Text style={styles.weekHeader}>{item.week}</Text>
-      {item.sessions.map(session => (
-        <View key={session.id}>
-          {renderSessionCard({ item: session })}
-        </View>
-      ))}
-    </View>
-  );
+  if (loading) return null;
 
-  const EmptyState = () => (
-    <View style={styles.emptyContainer}>
-      <Text style={styles.emptyIcon}>📊</Text>
-      <Text style={styles.emptyTitle}>No Sessions Yet</Text>
-      <Text style={styles.emptyText}>
-        Start recording tremor data from the Live Monitor to see your sessions here.
-      </Text>
-    </View>
-  );
-
-  if (loading) {
+  if (sessions.length === 0) {
     return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingText}>Loading sessions...</Text>
+      <View style={styles.container}>
+        <EmptyState
+          icon={icons.history}
+          title="No sessions yet"
+          description="Recorded sessions will appear here. Go to Live to start your first."
+        />
       </View>
     );
   }
 
-  const groupedData = groupSessionsByWeek();
+  const grouped = groupByWeek(filtered);
 
   return (
     <View style={styles.container}>
-      {/* Search Bar */}
-      <Searchbar
-        placeholder="Search sessions..."
-        onChangeText={handleSearch}
-        value={searchQuery}
-        style={styles.searchBar}
-      />
+      <View style={styles.searchWrap}>
+        <Searchbar
+          placeholder="Search sessions"
+          onChangeText={onSearch}
+          value={q}
+          style={styles.search}
+          inputStyle={{ fontSize: 14 }}
+          iconColor={colors.textTertiary}
+        />
+      </View>
 
-      {/* Sessions Count */}
-      {sessions.length > 0 && (
-        <View style={styles.countContainer}>
-          <Text style={styles.countText}>
-            {filteredSessions.length} {filteredSessions.length === 1 ? 'session' : 'sessions'}
-            {searchQuery && ` (filtered from ${sessions.length})`}
-          </Text>
-        </View>
-      )}
-
-      {/* Sessions List */}
       <FlatList
-        data={groupedData}
-        renderItem={renderWeekSection}
-        keyExtractor={(item, index) => `week-${index}`}
-        contentContainerStyle={styles.listContainer}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={['#1976D2']}
-          />
-        }
-        ListEmptyComponent={EmptyState}
+        data={grouped}
+        keyExtractor={(item) => item.label}
+        contentContainerStyle={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+        renderItem={({ item }) => (
+          <View style={{ marginBottom: spacing.lg }}>
+            <Text style={[typography.caption, styles.weekLabel]}>
+              {item.label.toUpperCase()}
+            </Text>
+            {item.sessions.map(renderSession)}
+          </View>
+        )}
       />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
+  container: { flex: 1, backgroundColor: colors.background },
+  searchWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
   },
-  searchBar: {
-    margin: 16,
-    marginBottom: 8,
-    elevation: 2,
+  search: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    elevation: 0,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  countContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
+  list: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxxl,
   },
-  countText: {
-    fontSize: 14,
-    color: '#666',
+  weekLabel: {
+    color: colors.textTertiary,
+    letterSpacing: 1,
+    marginBottom: spacing.sm,
+    marginTop: spacing.xs,
   },
-  listContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-  },
-  weekSection: {
-    marginBottom: 24,
-  },
-  weekHeader: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 12,
-    marginTop: 8,
-  },
-  sessionCard: {
-    marginBottom: 12,
-    elevation: 2,
-  },
-  sessionHeader: {
+  row: { flexDirection: 'row', alignItems: 'center' },
+  metrics: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  dateTimeContainer: {
-    flex: 1,
-  },
-  sessionDate: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  sessionTime: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 2,
-  },
-  severityChip: {
-    height: 28,
-  },
-  severityText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 12,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-  },
-  statItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  statValue: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  statLabel: {
-    fontSize: 11,
-    color: '#666',
-    marginTop: 2,
-  },
-  notes: {
-    marginTop: 12,
-    fontSize: 13,
-    color: '#666',
-    fontStyle: 'italic',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 100,
-  },
-  emptyIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 8,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    paddingHorizontal: 32,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    fontSize: 16,
-    color: '#666',
+    gap: spacing.md,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
   },
 });
 

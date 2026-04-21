@@ -2,69 +2,64 @@ import { Buffer } from 'buffer';
 import { BleManager } from 'react-native-ble-plx';
 import { PermissionsAndroid, Platform } from 'react-native';
 
-const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
-const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+// Sleeve (existing, Eric's firmware)
+export const SLEEVE_SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+export const SLEEVE_CHAR_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+export const SLEEVE_DEVICE_NAME = 'TremorSleeve';
 
-class BLEService {
+// Dispenser (placeholder — Samir will provide real UUIDs once he flips to peripheral)
+export const DISPENSER_SERVICE_UUID = 'a3c87500-8ed3-4bdf-8a39-a01bebede295';
+export const DISPENSER_CHAR_UUID = 'a3c87501-8ed3-4bdf-8a39-a01bebede295';
+export const DISPENSER_DEVICE_NAME = 'PillDispenser';
+
+async function requestBlePermissions() {
+  if (Platform.OS !== 'android') return true;
+  if (Platform.Version >= 31) {
+    const granted = await PermissionsAndroid.requestMultiple([
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+    ]);
+    return (
+      granted['android.permission.BLUETOOTH_SCAN'] === 'granted' &&
+      granted['android.permission.BLUETOOTH_CONNECT'] === 'granted' &&
+      granted['android.permission.ACCESS_FINE_LOCATION'] === 'granted'
+    );
+  }
+  const granted = await PermissionsAndroid.request(
+    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+  );
+  return granted === 'granted';
+}
+
+// -------- Sleeve client --------
+
+class SleeveBLEClient {
   constructor() {
     this.manager = new BleManager();
     this.device = null;
-    this.characteristic = null;
     this.onConnectionChange = null;
     this.onTremorPacket = null;
   }
 
-  async requestPermissions() {
-    if (Platform.OS === 'android') {
-      if (Platform.Version >= 31) {
-        const granted = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        ]);
-        return (
-          granted['android.permission.BLUETOOTH_SCAN'] === 'granted' &&
-          granted['android.permission.BLUETOOTH_CONNECT'] === 'granted' &&
-          granted['android.permission.ACCESS_FINE_LOCATION'] === 'granted'
-        );
-      } else {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-        );
-        return granted === 'granted';
-      }
-    }
-    return true;
-  }
-
-  async scanForDevices() {
-    console.log('🔍 Starting BLE scan...');
-    const hasPermission = await this.requestPermissions();
-    if (!hasPermission) {
-      console.error('❌ BLE permissions not granted');
-      return null;
-    }
+  async scan() {
+    const ok = await requestBlePermissions();
+    if (!ok) throw new Error('BLE permissions not granted');
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.manager.stopDeviceScan();
-        console.log('⏱️ Scan timeout - no TremorSleeve found');
         resolve(null);
       }, 10000);
 
       this.manager.startDeviceScan(null, null, (error, device) => {
         if (error) {
-          console.error('❌ Scan error:', error);
           clearTimeout(timeout);
           this.manager.stopDeviceScan();
           reject(error);
           return;
         }
-
-        console.log('📡 Found device:', device.name || 'Unknown');
-
-        if (device.name === 'TremorSleeve') {
-          console.log('✅ Found TremorSleeve!');
+        if (device?.name === SLEEVE_DEVICE_NAME) {
           clearTimeout(timeout);
           this.manager.stopDeviceScan();
           resolve(device);
@@ -73,108 +68,66 @@ class BLEService {
     });
   }
 
-  async connectToDevice(device) {
+  async connect(device) {
     try {
-      console.log('🔗 Connecting to device...');
       this.device = await device.connect();
-      console.log('✅ Connected!');
-
-      console.log('🔍 Discovering services...');
       await this.device.discoverAllServicesAndCharacteristics();
-      console.log('✅ Services discovered!');
 
-      console.log('📻 Starting to monitor characteristic...');
       this.device.monitorCharacteristicForService(
-        SERVICE_UUID,
-        CHARACTERISTIC_UUID,
+        SLEEVE_SERVICE_UUID,
+        SLEEVE_CHAR_UUID,
         (error, characteristic) => {
           if (error) {
-            console.error('❌ Monitor error:', error);
+            console.error('Sleeve monitor error:', error.message);
             return;
           }
-
           if (characteristic?.value) {
-            console.log('📦 Received BLE packet!');
-            const packet = this.decodeTremorPacket(characteristic.value);
-            if (packet && this.onTremorPacket) {
-              this.onTremorPacket(packet);
-            }
+            const packet = this.decodePacket(characteristic.value);
+            if (packet && this.onTremorPacket) this.onTremorPacket(packet);
           }
         }
       );
 
-      if (this.onConnectionChange) {
-        this.onConnectionChange(true);
-      }
-
-      console.log('✅ Monitoring started!');
+      if (this.onConnectionChange) this.onConnectionChange(true);
       return true;
     } catch (error) {
-      console.error('❌ Connection error:', error);
-      if (this.onConnectionChange) {
-        this.onConnectionChange(false);
-      }
+      console.error('Sleeve connect error:', error);
+      if (this.onConnectionChange) this.onConnectionChange(false);
       return false;
     }
   }
 
-  decodeTremorPacket(base64Data) {
+  // Eric's packet: float maxAmplitude (4 bytes) + bool tremor (1 byte) = 5 bytes
+  decodePacket(base64Data) {
     try {
-      const buffer = Buffer.from(base64Data, 'base64');
-      
-      console.log('📦 Packet size:', buffer.length, 'bytes');
-      
-      // Eric's actual packet structure: 5 bytes total
-      // float maxAmplitude (4 bytes) + bool tremor (1 byte)
-      
-      if (buffer.length < 5) {
-        console.error('❌ Packet too short:', buffer.length);
+      const buf = Buffer.from(base64Data, 'base64');
+      if (buf.length < 5) {
+        console.warn('Sleeve packet too short:', buf.length);
         return null;
       }
-
-      const maxAmplitude = buffer.readFloatLE(0);     // bytes 0-3
-      const tremorDetected = buffer.readUInt8(4) !== 0;       // byte 4
-
-      console.log('📊 Decoded:', {
-        maxAmplitude: maxAmplitude.toFixed(2),
-        tremor: tremorDetected
-      });
-
+      const amplitude = buf.readFloatLE(0);
+      const tremorDetected = buf.readUInt8(4) !== 0;
       return {
-        timestamp: Date.now(),
-        maxAmplitude: maxAmplitude,
-        dominantFreq: 5.0,  // Default tremor frequency
-        duration: tremorDetected ? 60 : 0,
-        tremor: tremorDetected
+        amplitude,
+        tremorDetected,
+        receivedAt: Date.now(),
       };
-    } catch (error) {
-      console.error('❌ Error decoding packet:', error);
+    } catch (e) {
+      console.error('Sleeve decode error:', e);
       return null;
     }
   }
 
   async disconnect() {
-    try {
-      if (this.device) {
-        await this.device.cancelConnection();
-        this.device = null;
-        console.log('🔌 Disconnected');
-        if (this.onConnectionChange) {
-          this.onConnectionChange(false);
-        }
-      }
-    } catch (error) {
-      console.error('❌ Disconnect error:', error);
+    if (this.device) {
+      try { await this.device.cancelConnection(); } catch {}
+      this.device = null;
+      if (this.onConnectionChange) this.onConnectionChange(false);
     }
   }
 
-  setConnectionCallback(callback) {
-    this.onConnectionChange = callback;
-  }
-
-  setTremorCallback(callback) {
-    this.onTremorPacket = callback;
-  }
+  setOnConnection(cb) { this.onConnectionChange = cb; }
+  setOnPacket(cb) { this.onTremorPacket = cb; }
 
   destroy() {
     this.disconnect();
@@ -182,4 +135,90 @@ class BLEService {
   }
 }
 
-export default new BLEService();
+// -------- Dispenser client --------
+
+class DispenserBLEClient {
+  constructor() {
+    this.manager = new BleManager();
+    this.device = null;
+    this.characteristic = null;
+    this.onConnectionChange = null;
+  }
+
+  async scan() {
+    const ok = await requestBlePermissions();
+    if (!ok) throw new Error('BLE permissions not granted');
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.manager.stopDeviceScan();
+        resolve(null);
+      }, 10000);
+
+      this.manager.startDeviceScan(null, null, (error, device) => {
+        if (error) {
+          clearTimeout(timeout);
+          this.manager.stopDeviceScan();
+          reject(error);
+          return;
+        }
+        if (device?.name === DISPENSER_DEVICE_NAME) {
+          clearTimeout(timeout);
+          this.manager.stopDeviceScan();
+          resolve(device);
+        }
+      });
+    });
+  }
+
+  async connect(device) {
+    try {
+      this.device = await device.connect();
+      await this.device.discoverAllServicesAndCharacteristics();
+      if (this.onConnectionChange) this.onConnectionChange(true);
+      return true;
+    } catch (error) {
+      console.error('Dispenser connect error:', error);
+      if (this.onConnectionChange) this.onConnectionChange(false);
+      return false;
+    }
+  }
+
+  // Dispenser firmware reads: pendingPills = *(int*)data
+  // So we write a 4-byte little-endian int32.
+  async dispense(pillCount) {
+    if (!this.device) throw new Error('Dispenser not connected');
+    const buf = Buffer.alloc(4);
+    buf.writeInt32LE(pillCount, 0);
+    const b64 = buf.toString('base64');
+
+    await this.device.writeCharacteristicWithResponseForService(
+      DISPENSER_SERVICE_UUID,
+      DISPENSER_CHAR_UUID,
+      b64
+    );
+    return true;
+  }
+
+  async disconnect() {
+    if (this.device) {
+      try { await this.device.cancelConnection(); } catch {}
+      this.device = null;
+      if (this.onConnectionChange) this.onConnectionChange(false);
+    }
+  }
+
+  isConnected() { return this.device !== null; }
+  setOnConnection(cb) { this.onConnectionChange = cb; }
+
+  destroy() {
+    this.disconnect();
+    this.manager.destroy();
+  }
+}
+
+export const SleeveBLE = new SleeveBLEClient();
+export const DispenserBLE = new DispenserBLEClient();
+
+// Default export preserves backward compatibility with LiveMonitor that imports `BLEService`
+export default SleeveBLE;
