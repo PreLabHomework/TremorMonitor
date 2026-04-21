@@ -1,97 +1,146 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# TremorMonitor
 
-# Getting Started
+A wearable Parkinson's tremor monitoring and stabilization system. Real-time BLE-connected sleeve tracks tremor events throughout the day, automated pill dispenser delivers medication on demand, and a three-mode mobile app serves patients, their doctors, and clinical researchers from a single codebase.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+Senior Design Project, Saint Louis University, Parks College of Engineering, 2026.
 
-## Step 1: Start Metro
+## Overview
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+Parkinson's disease affects around 10 million people worldwide, and tremor is one of its most visible and disabling symptoms. Existing monitoring relies on periodic in-clinic assessments that miss the day-to-day variability patients actually live with. TremorMonitor is a full stack system, hardware through cloud, designed to close that gap.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+The patient wears a lightweight sleeve containing an IMU and MCU that detects tremor events using FFT analysis in the 3.9 to 25 Hz band. The sleeve streams summary data to a phone app over BLE. When tremor is detected, the app can trigger a second BLE device, a wrist-worn pill dispenser, to deliver a dose. All session data is stored locally in SQLite for offline reliability and mirrored to Firebase so that a doctor (with patient consent) can review episodes remotely and a researcher (with anonymized consent) can analyze cohort trends.
 
-```sh
-# Using npm
-npm start
+## Screenshots
 
-# OR using Yarn
-yarn start
+> Screenshots coming soon. Current build is running on Android emulator and physical Samsung Galaxy Fold with BLE connectivity confirmed.
+
+## Team
+
+| Role | Name |
+| --- | --- |
+| App, system architecture, BLE integration | Hamza |
+| Sleeve firmware (ESP32, IMU, FFT) | Eric |
+| Dispenser firmware (nRF52840) | Samir |
+| Mechanical design | Sage |
+
+Faculty advisor and clinical consultation through the SLU Musculoskeletal Biomechanics Lab.
+
+## Tech Stack
+
+Mobile app: React Native 0.81, TypeScript, SQLite, Firebase Firestore, react-native-ble-plx, Notifee, React Navigation.
+
+Sleeve firmware: ESP32, Arduino framework, MPU6050, 200 Hz sampling, FFT tremor detection.
+
+Dispenser firmware: nRF52840, Zephyr, servo actuation on 4-byte command.
+
+Cloud: Firebase Firestore for sync, anonymized research opt-in, per-patient doctor sharing toggles.
+
+---
+
+## Architecture
+
+The app runs in one of three modes selected at launch. Each mode presents a different view on the same underlying data model.
+
+### Patient mode
+Sign in by tapping a card on the welcome screen (patients are added by their doctor in advance). Live monitor tab shows current tremor amplitude and session stats. Pills tab connects to the dispenser, supports manual dosing (1 to 5 pills) and auto-dispense on tremor detection. History tab lists past sessions grouped by week. Settings tab toggles doctor sharing, research participation, and notifications.
+
+### Doctor mode
+Dashboard with aggregate stats across all patients. Patient list with search and add-patient FAB. Per-patient detail view with session history and medication log, provided that patient has doctor sharing enabled.
+
+### Researcher mode
+Cohort-level aggregates over patients who opted into research sharing. Severity distribution histograms. Bulk CSV export of anonymized session data for downstream analysis.
+
+## BLE Protocol
+
+### Sleeve (peripheral, `TremorSleeve`)
+- Service UUID: `4fafc201-1fb5-459e-8fcc-c5c9c331914b`
+- Characteristic UUID: `beb5483e-36e1-4688-b7f5-ea07361b26a8`
+- Packet: 5 bytes, sent every 30 seconds
+  - Bytes 0 to 3: `float maxAmplitude` (little-endian, IEEE 754)
+  - Byte 4: `bool tremor` (1 if tremor detected in window, else 0)
+
+Amplitude is mapped to a 0 to 4 severity scale (modeled on MDS-UPDRS Part III item 3.15) using thresholds that will be tuned against real patient recordings during clinical validation.
+
+### Dispenser (peripheral, `PillDispenser`)
+- Command: 4-byte little-endian `int32` specifying number of pills
+- UUIDs are currently placeholders; will be finalized once firmware is flipped to peripheral role
+
+## Data Model
+
+SQLite on device with seven tables: patients, sessions, events, medications, med_logs, settings, and schema_version. Schema version is checked on every app launch; a mismatch triggers a fresh recreation so schema migrations can ship safely.
+
+Firebase mirrors three collections:
+- `patients` (name, id, sharing flags)
+- `sessions` (patient_id, start/end, metrics)
+- `med_logs` (patient_id, timestamp, dose, triggered_by)
+
+Writes go through a service layer that checks sharing flags before uploading anything cloud-side.
+
+## Getting Started
+
+Requires Node 18+, Android Studio or Xcode, and a Firebase project with Firestore enabled.
+
+```bash
+git clone https://github.com/PreLabHomework/TremorMonitor.git
+cd TremorMonitor
+npm install
 ```
 
-## Step 2: Build and run your app
+Add your `google-services.json` to `android/app/` and your `GoogleService-Info.plist` to `ios/`.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+### Run on Android
 
-### Android
-
-```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
+```bash
+npx react-native run-android
 ```
 
-### iOS
+If vector icons render as placeholder boxes after a fresh install, this block at the end of `android/app/build.gradle` handles it:
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
+```gradle
+apply from: file("../../node_modules/react-native-vector-icons/fonts.gradle")
 ```
 
-Then, and every time you update your native dependencies, run:
+### Run on iOS
 
-```sh
-bundle exec pod install
+```bash
+cd ios && pod install && cd ..
+npx react-native run-ios
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+### Testing with the sleeve
 
-```sh
-# Using npm
-npm run ios
+Physical device only; emulators do not support BLE. Flash Eric's firmware (separate repo) to an ESP32, power it, then in the app select Patient mode, pick a patient, and tap "Scan for sleeve" on the Live Monitor tab.
 
-# OR using Yarn
-yarn ios
+## Project Structure
+
+```
+src/
+  theme/          design tokens, icon registry
+  components/     reusable UI primitives
+  services/       DatabaseService, BLEService (sleeve + dispenser), FirebaseService, NotificationService
+  screens/
+    ModeSelection, PatientWelcome         entry points
+    LiveMonitor, History, Pills, Settings patient tabs
+    SessionDetail                         shared detail view
+    DoctorDashboard, PatientList,         doctor views
+    PatientDetail, AddPatient
+    ResearchDashboard, ResearchExport     researcher views
+android/, ios/    native projects
+App.tsx           3-mode navigation shell
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+## Roadmap
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+- Tune amplitude-to-severity thresholds against real tremor recordings
+- Complete dispenser firmware and finalize real UUIDs
+- Per-day and per-week trend views in doctor mode
+- Background session recording when app is closed
+- HIPAA review before any real patient data use
 
-## Step 3: Modify your app
+## License
 
-Now that you have successfully run the app, let's make changes!
+TBD, currently for academic use as part of SLU senior design evaluation.
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+## Acknowledgments
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+Saint Louis University Parks College of Engineering, and the Musculoskeletal Biomechanics Lab for consultation on tremor biomechanics and clinical workflow.
