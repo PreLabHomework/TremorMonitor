@@ -2,7 +2,7 @@
 
 A wearable Parkinson's tremor monitoring and stabilization system. Real-time BLE-connected sleeve tracks tremor events throughout the day, automated pill dispenser delivers medication on demand, and a three-mode mobile app serves patients, their doctors, and clinical researchers from a single codebase.
 
-Senior Design Project, Saint Louis University, Parks College of Engineering, 2026.
+Senior Design Project, Saint Louis University, 2026.
 
 ## Overview
 
@@ -23,7 +23,7 @@ The patient wears a lightweight sleeve containing an IMU and MCU that detects tr
 | Dispenser firmware (nRF52840) | Samir |
 | Mechanical design | Sage |
 
-Faculty advisor and clinical consultation through the SLU Musculoskeletal Biomechanics Lab.
+Faculty advisor and clinical consultation through the SLU ECE/BME Department.
 
 ## Tech Stack
 
@@ -109,7 +109,7 @@ npx react-native run-ios
 
 ### Testing with the sleeve
 
-Physical device only; emulators do not support BLE. Flash Eric's firmware (separate repo) to an ESP32, power it, then in the app select Patient mode, pick a patient, and tap "Scan for sleeve" on the Live Monitor tab.
+Physical device only; emulators do not support BLE. Flash firmware (separate repo) to an ESP32, power it, then in the app select Patient mode, pick a patient, and tap "Scan for sleeve" on the Live Monitor tab.
 
 ## Project Structure
 
@@ -143,4 +143,4 @@ TBD, currently for academic use as part of SLU senior design evaluation.
 
 ## Acknowledgments
 
-Saint Louis University Parks College of Engineering, and the Musculoskeletal Biomechanics Lab for consultation on tremor biomechanics and clinical workflow.
+Saint Louis University College of Engineering, and SLU Faculty for consultation on tremor biomechanics and clinical workflow.
