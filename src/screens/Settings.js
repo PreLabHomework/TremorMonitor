@@ -11,6 +11,7 @@ import {
   Card, SectionHeader, IconCircle, PrimaryButton, SecondaryButton, Divider,
 } from '../components/ui';
 import { colors, spacing, radius, typography, shadows, icons } from '../theme';
+import { seedDemoData, clearDemoData } from '../demo/DemoSeeder';
 
 const Row = ({ icon, iconColor, title, subtitle, right }) => (
   <View style={styles.row}>
@@ -392,6 +393,50 @@ const Settings = () => {
               <Text style={[typography.bodyMedium, { color: colors.textPrimary }]}>Clear local data</Text>
               <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
                 Remove all sessions from this device
+              </Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={22} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </Card>
+      </View>
+
+      {/* Developer (remove before production) */}
+      <View style={{ marginTop: spacing.lg }}>
+        <SectionHeader title="Developer" />
+        <Card padding={0}>
+          <TouchableOpacity
+            style={styles.systemRow}
+            onPress={async () => {
+              try {
+                const res = await seedDemoData();
+                Alert.alert('Demo data seeded', `${res.patientsAdded} patients, ${res.sessionsAdded} sessions, ${res.logsAdded} med logs`);
+              } catch (e) {
+                Alert.alert('Seed failed', e.message);
+              }
+            }}
+          >
+            <IconCircle icon="database-plus" color={colors.primary} size={36} iconSize={18} />
+            <View style={{ flex: 1, marginLeft: spacing.md }}>
+              <Text style={[typography.bodyMedium, { color: colors.textPrimary }]}>Seed demo data</Text>
+              <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+                Populate patients, sessions, and med logs
+              </Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={22} color={colors.textTertiary} />
+          </TouchableOpacity>
+          <Divider />
+          <TouchableOpacity
+            style={styles.systemRow}
+            onPress={async () => {
+              await clearDemoData();
+              Alert.alert('Cleared', 'All demo entries removed');
+            }}
+          >
+            <IconCircle icon="database-remove" color={colors.error} size={36} iconSize={18} />
+            <View style={{ flex: 1, marginLeft: spacing.md }}>
+              <Text style={[typography.bodyMedium, { color: colors.textPrimary }]}>Clear demo data</Text>
+              <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+                Remove all entries with demo_ prefix
               </Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={22} color={colors.textTertiary} />

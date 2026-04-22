@@ -16,6 +16,31 @@ import {
   severityColor, severityLabel,
 } from '../theme';
 
+// =========================================================================
+// DEMO MODE - set to false before commit/production use.
+// When true, fakes BLE connection and streams realistic packets for demo
+// screenshots and poster/class presentations. No real BLE calls are made.
+// =========================================================================
+const DEMO_MODE = false;
+
+// 30s-apart "packets" at realistic Parkinsonian tremor amplitudes (g).
+// Pattern starts calm, builds to moderate-severe, then eases. Loops.
+const DEMO_PACKETS = [
+  { amplitude: 0.28, tremorDetected: false },
+  { amplitude: 0.41, tremorDetected: false },
+  { amplitude: 0.67, tremorDetected: true },
+  { amplitude: 1.24, tremorDetected: true },
+  { amplitude: 2.11, tremorDetected: true },
+  { amplitude: 2.84, tremorDetected: true },
+  { amplitude: 3.12, tremorDetected: true },
+  { amplitude: 2.56, tremorDetected: true },
+  { amplitude: 1.89, tremorDetected: true },
+  { amplitude: 1.03, tremorDetected: true },
+  { amplitude: 0.54, tremorDetected: true },
+  { amplitude: 0.33, tremorDetected: false },
+];
+const DEMO_INTERVAL_MS = 2000; // 2s instead of 30s so the demo is lively
+
 const formatDuration = (s) => {
   const m = Math.floor(s / 60);
   const r = s % 60;
@@ -48,6 +73,8 @@ const LiveMonitor = ({ navigation }) => {
   const patientRef = useRef(null);
   const recordingRef = useRef(false);
   const statsRef = useRef(sessionStats);
+  const demoIntervalRef = useRef(null);
+  const demoIdxRef = useRef(0);
 
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   useEffect(() => { patientRef.current = patient; }, [patient]);
@@ -62,11 +89,14 @@ const LiveMonitor = ({ navigation }) => {
   );
 
   useEffect(() => {
-    SleeveBLE.setOnConnection(setConnected);
-    SleeveBLE.setOnPacket(handlePacket);
+    if (!DEMO_MODE) {
+      SleeveBLE.setOnConnection(setConnected);
+      SleeveBLE.setOnPacket(handlePacket);
+    }
 
     return () => {
-      if (recordingRef.current && sessionIdRef.current) {
+      if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+      if (recordingRef.current && sessionIdRef.current && !DEMO_MODE) {
         DatabaseService.endSession(sessionIdRef.current).catch(() => {});
       }
     };
@@ -100,6 +130,18 @@ const LiveMonitor = ({ navigation }) => {
     const currentSeverity = packet.tremorDetected
       ? amplitudeToSeverity(packet.amplitude)
       : 0;
+
+    if (DEMO_MODE) {
+      // Update stats without touching the database
+      setSessionStats((prev) => ({
+        packetCount: prev.packetCount + 1,
+        tremorCount: prev.tremorCount + (packet.tremorDetected ? 1 : 0),
+        peakAmplitude: Math.max(prev.peakAmplitude, packet.amplitude),
+        maxSeverity: Math.max(prev.maxSeverity, currentSeverity),
+        currentSeverity,
+      }));
+      return;
+    }
 
     if (recordingRef.current && sessionIdRef.current) {
       await DatabaseService.addFeature(sessionIdRef.current, {
@@ -136,6 +178,13 @@ const LiveMonitor = ({ navigation }) => {
   };
 
   const scanAndConnect = async () => {
+    if (DEMO_MODE) {
+      setScanning(true);
+      await new Promise((r) => setTimeout(r, 900));
+      setConnected(true);
+      setScanning(false);
+      return;
+    }
     setScanning(true);
     try {
       const device = await SleeveBLE.scan();
@@ -152,6 +201,11 @@ const LiveMonitor = ({ navigation }) => {
   };
 
   const disconnect = async () => {
+    if (DEMO_MODE) {
+      if (recording) await stopRecording();
+      setConnected(false);
+      return;
+    }
     if (recording) await stopRecording();
     await SleeveBLE.disconnect();
   };
@@ -161,6 +215,25 @@ const LiveMonitor = ({ navigation }) => {
       Alert.alert('No active patient', 'Return to Welcome to select a patient first.');
       return;
     }
+
+    if (DEMO_MODE) {
+      const fakeId = 'demo_live_' + Date.now();
+      setSessionId(fakeId);
+      setSessionStart(Date.now());
+      setElapsedSec(0);
+      setSessionStats({ packetCount: 0, tremorCount: 0, peakAmplitude: 0, maxSeverity: 0, currentSeverity: 0 });
+      setRecording(true);
+      demoIdxRef.current = 0;
+
+      demoIntervalRef.current = setInterval(() => {
+        const packet = DEMO_PACKETS[demoIdxRef.current % DEMO_PACKETS.length];
+        demoIdxRef.current += 1;
+        // Run through the same handler as a real packet would.
+        handlePacket(packet);
+      }, DEMO_INTERVAL_MS);
+      return;
+    }
+
     const id = await DatabaseService.createSession(patient.id);
     setSessionId(id);
     setSessionStart(Date.now());
@@ -171,10 +244,20 @@ const LiveMonitor = ({ navigation }) => {
 
   const stopRecording = async () => {
     setRecording(false);
+
+    if (DEMO_MODE) {
+      if (demoIntervalRef.current) {
+        clearInterval(demoIntervalRef.current);
+        demoIntervalRef.current = null;
+      }
+      setSessionId(null);
+      setSessionStart(null);
+      return;
+    }
+
     if (!sessionIdRef.current) return;
     try {
       await DatabaseService.endSession(sessionIdRef.current);
-      // Upload in background — don't block UI
       FirebaseService.uploadSession(sessionIdRef.current).catch(() => {});
     } catch (e) {
       console.error('End session error:', e);
