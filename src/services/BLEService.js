@@ -173,8 +173,8 @@ class DispenserBLEClient {
 
   async connect(device) {
     try {
-      this.device = await device.connect();
-      await this.device.discoverAllServicesAndCharacteristics();
+      const connected = await device.connect();
+      this.device = await connected.discoverAllServicesAndCharacteristics();
       if (this.onConnectionChange) this.onConnectionChange(true);
       return true;
     } catch (error) {
@@ -192,11 +192,20 @@ class DispenserBLEClient {
     buf.writeInt32LE(pillCount, 0);
     const b64 = buf.toString('base64');
 
-    await this.device.writeCharacteristicWithResponseForService(
-      DISPENSER_SERVICE_UUID,
-      DISPENSER_CHAR_UUID,
-      b64
-    );
+    try {
+      await this.device.writeCharacteristicWithResponseForService(
+        DISPENSER_SERVICE_UUID,
+        DISPENSER_CHAR_UUID,
+        b64
+      );
+    } catch (e) {
+      // Fall back to write-without-response if the char is WRITE_WO_RESP only
+      await this.device.writeCharacteristicWithoutResponseForService(
+        DISPENSER_SERVICE_UUID,
+        DISPENSER_CHAR_UUID,
+        b64
+      );
+    }
     return true;
   }
 
