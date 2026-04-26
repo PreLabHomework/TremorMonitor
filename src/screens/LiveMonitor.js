@@ -24,7 +24,6 @@ import {
 const DEMO_MODE = false;
 
 // 30s-apart "packets" at realistic Parkinsonian tremor amplitudes (g).
-// Pattern starts calm, builds to moderate-severe, then eases. Loops.
 const DEMO_PACKETS = [
   { amplitude: 0.28, tremorDetected: false },
   { amplitude: 0.41, tremorDetected: false },
@@ -39,7 +38,7 @@ const DEMO_PACKETS = [
   { amplitude: 0.54, tremorDetected: true },
   { amplitude: 0.33, tremorDetected: false },
 ];
-const DEMO_INTERVAL_MS = 2000; // 2s instead of 30s so the demo is lively
+const DEMO_INTERVAL_MS = 2000;
 
 const formatDuration = (s) => {
   const m = Math.floor(s / 60);
@@ -68,7 +67,6 @@ const LiveMonitor = ({ navigation }) => {
   });
   const [elapsedSec, setElapsedSec] = useState(0);
 
-  // Store refs so callbacks see latest values
   const sessionIdRef = useRef(null);
   const patientRef = useRef(null);
   const recordingRef = useRef(false);
@@ -81,17 +79,33 @@ const LiveMonitor = ({ navigation }) => {
   useEffect(() => { recordingRef.current = recording; }, [recording]);
   useEffect(() => { statsRef.current = sessionStats; }, [sessionStats]);
 
+  // Re-sync connection state on focus — handles cases where the sleeve was
+  // disconnected while the user was on another screen, or where the screen
+  // mounted after the connection event fired.
   useFocusEffect(
     React.useCallback(() => {
       loadActivePatient();
       loadTodaySummary();
+      if (!DEMO_MODE) {
+        setConnected(SleeveBLE.isConnected());
+      }
     }, [])
   );
 
+  // Wire up BLE callbacks once
   useEffect(() => {
     if (!DEMO_MODE) {
-      SleeveBLE.setOnConnection(setConnected);
+      SleeveBLE.setOnConnection((isConnected) => {
+        setConnected(isConnected);
+        // If the sleeve dropped while we were recording, gracefully end the
+        // session so we don't keep showing "Recording" with a dead connection.
+        if (!isConnected && recordingRef.current && sessionIdRef.current) {
+          stopRecordingFromDisconnect();
+        }
+      });
       SleeveBLE.setOnPacket(handlePacket);
+      // Initial sync in case connection happened before mount
+      setConnected(SleeveBLE.isConnected());
     }
 
     return () => {
@@ -132,7 +146,6 @@ const LiveMonitor = ({ navigation }) => {
       : 0;
 
     if (DEMO_MODE) {
-      // Update stats without touching the database
       setSessionStats((prev) => ({
         packetCount: prev.packetCount + 1,
         tremorCount: prev.tremorCount + (packet.tremorDetected ? 1 : 0),
@@ -144,10 +157,14 @@ const LiveMonitor = ({ navigation }) => {
     }
 
     if (recordingRef.current && sessionIdRef.current) {
-      await DatabaseService.addFeature(sessionIdRef.current, {
-        amplitude: packet.amplitude,
-        tremorDetected: packet.tremorDetected,
-      });
+      try {
+        await DatabaseService.addFeature(sessionIdRef.current, {
+          amplitude: packet.amplitude,
+          tremorDetected: packet.tremorDetected,
+        });
+      } catch (e) {
+        console.warn('addFeature failed:', e?.message || e);
+      }
 
       setSessionStats((prev) => ({
         packetCount: prev.packetCount + 1,
@@ -170,11 +187,28 @@ const LiveMonitor = ({ navigation }) => {
               sessionId: sessionIdRef.current,
             });
           } catch (e) {
-            console.error('Auto-dispense failed:', e);
+            console.warn('Auto-dispense failed:', e?.message || e);
           }
         }
       }
     }
+  };
+
+  // Internal: end a recording because the sleeve dropped, not because the
+  // user tapped Stop. Keeps the data we already captured but doesn't try to
+  // alert the user mid-flow.
+  const stopRecordingFromDisconnect = async () => {
+    setRecording(false);
+    if (!sessionIdRef.current) return;
+    try {
+      await DatabaseService.endSession(sessionIdRef.current);
+      FirebaseService.uploadSession(sessionIdRef.current).catch(() => {});
+    } catch (e) {
+      console.warn('End session on disconnect error:', e?.message || e);
+    }
+    setSessionId(null);
+    setSessionStart(null);
+    await loadTodaySummary();
   };
 
   const scanAndConnect = async () => {
@@ -228,18 +262,21 @@ const LiveMonitor = ({ navigation }) => {
       demoIntervalRef.current = setInterval(() => {
         const packet = DEMO_PACKETS[demoIdxRef.current % DEMO_PACKETS.length];
         demoIdxRef.current += 1;
-        // Run through the same handler as a real packet would.
         handlePacket(packet);
       }, DEMO_INTERVAL_MS);
       return;
     }
 
-    const id = await DatabaseService.createSession(patient.id);
-    setSessionId(id);
-    setSessionStart(Date.now());
-    setElapsedSec(0);
-    setSessionStats({ packetCount: 0, tremorCount: 0, peakAmplitude: 0, maxSeverity: 0, currentSeverity: 0 });
-    setRecording(true);
+    try {
+      const id = await DatabaseService.createSession(patient.id);
+      setSessionId(id);
+      setSessionStart(Date.now());
+      setElapsedSec(0);
+      setSessionStats({ packetCount: 0, tremorCount: 0, peakAmplitude: 0, maxSeverity: 0, currentSeverity: 0 });
+      setRecording(true);
+    } catch (e) {
+      Alert.alert('Could not start session', e?.message || 'Database error.');
+    }
   };
 
   const stopRecording = async () => {
@@ -260,7 +297,7 @@ const LiveMonitor = ({ navigation }) => {
       await DatabaseService.endSession(sessionIdRef.current);
       FirebaseService.uploadSession(sessionIdRef.current).catch(() => {});
     } catch (e) {
-      console.error('End session error:', e);
+      console.warn('End session error:', e?.message || e);
     }
     setSessionId(null);
     setSessionStart(null);

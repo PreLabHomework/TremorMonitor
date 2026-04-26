@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Provider as PaperProvider } from 'react-native-paper';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Screens — Shared
 import ModeSelection from './src/screens/ModeSelection';
@@ -35,37 +36,43 @@ import { colors, icons } from './src/theme';
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-const baseTabScreenOptions = {
-  tabBarActiveTintColor: colors.primary,
-  tabBarInactiveTintColor: colors.textTertiary,
-  tabBarStyle: {
-    backgroundColor: colors.surface,
-    borderTopColor: colors.border,
-    paddingTop: 6,
-    paddingBottom: 6,
-    height: 62,
-  },
-  tabBarLabelStyle: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  headerStyle: {
-    backgroundColor: colors.surface,
-  },
-  headerTitleStyle: {
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  headerShadowVisible: false,
+// Hook that builds tab options with bottom safe-area inset baked in.
+// This pushes the tab bar above the Android gesture bar / navigation pill.
+const useTabScreenOptions = () => {
+  const insets = useSafeAreaInsets();
+  return {
+    tabBarActiveTintColor: colors.primary,
+    tabBarInactiveTintColor: colors.textTertiary,
+    tabBarStyle: {
+      backgroundColor: colors.surface,
+      borderTopColor: colors.border,
+      paddingTop: 6,
+      paddingBottom: 6 + insets.bottom,
+      height: 62 + insets.bottom,
+    },
+    tabBarLabelStyle: {
+      fontSize: 11,
+      fontWeight: '600',
+    },
+    headerStyle: {
+      backgroundColor: colors.surface,
+    },
+    headerTitleStyle: {
+      fontWeight: '700',
+      color: colors.textPrimary,
+    },
+    headerShadowVisible: false,
+  };
 };
 
 // ============ PATIENT ============
 
 function PatientTabs() {
+  const baseOptions = useTabScreenOptions();
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        ...baseTabScreenOptions,
+        ...baseOptions,
         tabBarIcon: ({ color, size }) => {
           const name = {
             Live: icons.live,
@@ -102,10 +109,11 @@ function PatientStack() {
 // ============ DOCTOR ============
 
 function DoctorTabs() {
+  const baseOptions = useTabScreenOptions();
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        ...baseTabScreenOptions,
+        ...baseOptions,
         tabBarIcon: ({ color, size }) => {
           const name = {
             Dashboard: icons.dashboard,
@@ -156,10 +164,11 @@ function DoctorStack() {
 // ============ RESEARCHER ============
 
 function ResearcherTabs() {
+  const baseOptions = useTabScreenOptions();
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        ...baseTabScreenOptions,
+        ...baseOptions,
         tabBarIcon: ({ color, size }) => {
           const name = {
             Overview: icons.research,
@@ -220,23 +229,27 @@ function App() {
 
   if (!isReady || !initialRoute) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      <SafeAreaProvider>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <PaperProvider>
-      <NavigationContainer>
-        <Stack.Navigator initialRouteName={initialRoute} screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="ModeSelection" component={ModeSelection} />
-          <Stack.Screen name="PatientApp" component={PatientStack} />
-          <Stack.Screen name="DoctorApp" component={DoctorStack} />
-          <Stack.Screen name="ResearcherApp" component={ResearcherStack} />
-        </Stack.Navigator>
-      </NavigationContainer>
-    </PaperProvider>
+    <SafeAreaProvider>
+      <PaperProvider>
+        <NavigationContainer>
+          <Stack.Navigator initialRouteName={initialRoute} screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="ModeSelection" component={ModeSelection} />
+            <Stack.Screen name="PatientApp" component={PatientStack} />
+            <Stack.Screen name="DoctorApp" component={DoctorStack} />
+            <Stack.Screen name="ResearcherApp" component={ResearcherStack} />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </PaperProvider>
+    </SafeAreaProvider>
   );
 }
 

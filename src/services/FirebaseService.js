@@ -14,6 +14,9 @@ import {
 } from 'firebase/firestore';
 import DatabaseService from './DatabaseService';
 
+// Helper: log warnings without triggering the red error popup
+const logWarn = (msg, e) => console.warn(msg, e?.message || e);
+
 class FirebaseService {
 
   // -------- Patients --------
@@ -31,7 +34,7 @@ class FirebaseService {
       }, { merge: true });
       return id;
     } catch (e) {
-      console.error('upsertPatient error:', e);
+      logWarn('upsertPatient error:', e);
       throw e;
     }
   }
@@ -43,7 +46,7 @@ class FirebaseService {
       snap.forEach(d => patients.push({ id: d.id, ...d.data() }));
       return patients;
     } catch (e) {
-      console.error('getAllPatients error:', e);
+      logWarn('getAllPatients error:', e);
       return [];
     }
   }
@@ -52,18 +55,21 @@ class FirebaseService {
     try {
       await deleteDoc(doc(db, 'patients', patientId));
     } catch (e) {
-      console.error('deletePatient error:', e);
+      logWarn('deletePatient error:', e);
       throw e;
     }
   }
 
   // -------- Sessions --------
 
-  // Called after a session ends locally. Uploads the session + its features + events.
   async uploadSession(sessionId) {
     try {
       const session = await DatabaseService.getSession(sessionId);
-      if (!session) throw new Error('Session not found');
+      if (!session) {
+        // Not an error — session was deleted or doesn't exist locally.
+        // Silently skip to avoid spamming the LogBox.
+        return null;
+      }
 
       const features = await DatabaseService.getSessionFeatures(sessionId);
       const events = await DatabaseService.getSessionEvents(sessionId);
@@ -99,17 +105,16 @@ class FirebaseService {
       const docRef = await addDoc(collection(db, 'sessions'), payload);
       return docRef.id;
     } catch (e) {
-      console.error('uploadSession error:', e);
-      // Queue for retry
-      await DatabaseService.queueSync('session', sessionId, { retry: true });
-      throw e;
+      logWarn('uploadSession error:', e);
+      try {
+        await DatabaseService.queueSync('session', sessionId, { retry: true });
+      } catch {}
+      return null;
     }
   }
 
   async getSessionsForPatient(patientId) {
     try {
-      // orderBy + where on different fields requires a composite index.
-      // To avoid that config burden, we filter then sort client-side.
       const q = query(
         collection(db, 'sessions'),
         where('patient_id', '==', patientId)
@@ -122,14 +127,13 @@ class FirebaseService {
       );
       return sessions;
     } catch (e) {
-      console.error('getSessionsForPatient error:', e);
+      logWarn('getSessionsForPatient error:', e);
       return [];
     }
   }
 
   async getAllSessionsForResearch() {
     try {
-      // Only patients who opted into research
       const patientsSnap = await getDocs(
         query(collection(db, 'patients'), where('research_sharing', '==', true))
       );
@@ -138,7 +142,6 @@ class FirebaseService {
 
       if (researchPatientIds.length === 0) return [];
 
-      // Firestore 'in' clause caps at 30 values per query.
       const sessions = [];
       for (let i = 0; i < researchPatientIds.length; i += 30) {
         const chunk = researchPatientIds.slice(i, i + 30);
@@ -152,7 +155,7 @@ class FirebaseService {
 
       return sessions;
     } catch (e) {
-      console.error('getAllSessionsForResearch error:', e);
+      logWarn('getAllSessionsForResearch error:', e);
       return [];
     }
   }
@@ -163,13 +166,15 @@ class FirebaseService {
     try {
       const logs = await DatabaseService.getMedicationLogs(null, 500);
       const log = logs.find(l => l.id === logId);
-      if (!log) throw new Error('Medication log not found');
+      if (!log) {
+        // Silently skip — log was deleted or doesn't exist locally
+        return null;
+      }
 
       // Check if patient allows doctor to see
       if (log.patient_id) {
         const patient = await DatabaseService.getPatient(log.patient_id);
         if (patient && !patient.doctor_sharing) {
-          // Patient has disabled doctor sharing - skip upload
           return null;
         }
       }
@@ -187,9 +192,11 @@ class FirebaseService {
       const docRef = await addDoc(collection(db, 'medication_logs'), payload);
       return docRef.id;
     } catch (e) {
-      console.error('uploadMedicationLog error:', e);
-      await DatabaseService.queueSync('medication_log', logId, { retry: true });
-      throw e;
+      logWarn('uploadMedicationLog error:', e);
+      try {
+        await DatabaseService.queueSync('medication_log', logId, { retry: true });
+      } catch {}
+      return null;
     }
   }
 
@@ -207,7 +214,7 @@ class FirebaseService {
       );
       return logs;
     } catch (e) {
-      console.error('getMedicationLogsForPatient error:', e);
+      logWarn('getMedicationLogsForPatient error:', e);
       return [];
     }
   }
@@ -215,7 +222,12 @@ class FirebaseService {
   // -------- Sync queue processor --------
 
   async processSyncQueue() {
-    const pending = await DatabaseService.getPendingSyncs();
+    let pending;
+    try {
+      pending = await DatabaseService.getPendingSyncs();
+    } catch {
+      return { succeeded: 0, failed: 0, total: 0 };
+    }
     let succeeded = 0;
     let failed = 0;
 
@@ -223,9 +235,14 @@ class FirebaseService {
       try {
         if (item.entity_type === 'session') {
           const firebaseId = await this.uploadSession(item.entity_id);
-          await DatabaseService.markSyncComplete(
-            item.id, firebaseId, 'session', item.entity_id
-          );
+          if (firebaseId) {
+            await DatabaseService.markSyncComplete(
+              item.id, firebaseId, 'session', item.entity_id
+            );
+          } else {
+            // Drop from queue — record gone or upload skipped
+            await DatabaseService.markSyncComplete(item.id);
+          }
           succeeded++;
         } else if (item.entity_type === 'medication_log') {
           const firebaseId = await this.uploadMedicationLog(item.entity_id);
@@ -233,15 +250,13 @@ class FirebaseService {
             await DatabaseService.markSyncComplete(
               item.id, firebaseId, 'medication_log', item.entity_id
             );
-            succeeded++;
           } else {
-            // Upload was skipped (privacy) — drop from queue
             await DatabaseService.markSyncComplete(item.id);
-            succeeded++;
           }
+          succeeded++;
         }
       } catch (e) {
-        await DatabaseService.markSyncFailed(item.id);
+        try { await DatabaseService.markSyncFailed(item.id); } catch {}
         failed++;
       }
     }
@@ -257,7 +272,7 @@ class FirebaseService {
       await deleteDoc(testRef);
       return true;
     } catch (e) {
-      console.error('Firebase test failed:', e);
+      logWarn('Firebase test failed:', e);
       return false;
     }
   }

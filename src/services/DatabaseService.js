@@ -8,14 +8,16 @@ const DATABASE_NAME = 'TremorMonitor.db';
 const SCHEMA_VERSION = 2;
 
 // Convert peak amplitude to a 0-4 severity scale (UPDRS-like)
-// Thresholds tuned against Eric's RMS tremor output (m/s^2).
-// Adjust these as we collect real tremor samples.
+// Thresholds calibrated against the new sleeve firmware (April 2026)
+// which sends band-limited RMS amplitude in the tremor frequency range
+// (~4-25 Hz). Gravity is excluded (DC bin), so values represent shake
+// energy only. Tune these as more real samples come in.
 export const amplitudeToSeverity = (amp) => {
   if (!amp || amp <= 0) return 0;
-  if (amp < 0.5) return 1;  // mild
-  if (amp < 1.5) return 2;  // moderate
-  if (amp < 3.0) return 3;  // strong
-  return 4;                  // severe
+  if (amp < 2.0) return 1;   // mild
+  if (amp < 5.0) return 2;   // moderate
+  if (amp < 10.0) return 3;  // strong
+  return 4;                   // severe
 };
 
 export const severityLabel = (sev) => {

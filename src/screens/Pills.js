@@ -30,15 +30,23 @@ const Pills = () => {
   const [medicationMode, setMedicationMode] = useState('manual');
   const [recentLogs, setRecentLogs] = useState([]);
 
+  // Wire up the connection callback once. The dispenser client now fires
+  // this on remote disconnects too (the firmware dropping out, etc.) so
+  // the UI tracks reality.
+  useEffect(() => {
+    DispenserBLE.setOnConnection(setConnected);
+    // Initial sync in case connection happened before mount
+    setConnected(DispenserBLE.isConnected());
+  }, []);
+
+  // Re-sync on focus so if the dispenser disconnected while the user was
+  // on another tab, the UI shows the truth instead of a stale "Connected".
   useFocusEffect(
     React.useCallback(() => {
       loadAll();
+      setConnected(DispenserBLE.isConnected());
     }, [])
   );
-
-  useEffect(() => {
-    DispenserBLE.setOnConnection(setConnected);
-  }, []);
 
   const loadAll = async () => {
     const pid = await DatabaseService.getSetting('active_patient_id', null);
