@@ -15,8 +15,7 @@ The patient wears a lightweight sleeve containing an IMU and microcontroller. Th
 This repository contains the React Native application and app-side integration logic. Firmware prototypes for the sleeve and dispenser are maintained in a separate repository.
 
 ## Screenshots
-
-> Screenshots coming soon. Current build is running on Android emulator and physical Samsung Galaxy Fold with BLE connectivity confirmed.
+<img width="748" height="457" alt="image" src="https://github.com/user-attachments/assets/eaf3a825-4645-4e6b-b519-d8fe54ab90e0" />
 
 ## Team
 
