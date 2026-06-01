@@ -140,6 +140,11 @@ App.tsx           3-mode navigation shell
 - Background session recording when app is closed
 - HIPAA review before any real patient data use
 
+## Related repositories
+
+- Firmware prototypes: https://github.com/PreLabHomework/tremorTrackers  
+  ESP32 and Arduino firmware experiments for the wearable sleeve, IMU sensing, BLE communication, tremor alert logic, and medication device testing.
+
 ## License
 
 TBD, currently for academic use as part of SLU senior design evaluation.
