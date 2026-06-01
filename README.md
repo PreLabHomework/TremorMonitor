@@ -1,14 +1,18 @@
 # TremorMonitor
 
-A wearable Parkinson's tremor monitoring and stabilization system. Real-time BLE-connected sleeve tracks tremor events throughout the day, automated pill dispenser delivers medication on demand, and a three-mode mobile app serves patients, their doctors, and clinical researchers from a single codebase.
+TremorMonitor is a senior design prototype for Parkinson's tremor monitoring, built around a BLE-connected wearable sleeve and a cross-platform mobile app for patients, clinicians, and researchers.
+
+The system connects wearable tremor-sensing hardware to a React Native application that records sessions, tracks medication events, visualizes tremor data, and exports clinical or research data. The firmware-side sleeve and dispenser prototypes are maintained separately, while this repository focuses on the mobile app, BLE integration, local database, cloud sync, and multi-role workflow.
 
 Senior Design Project, Saint Louis University, 2026.
 
 ## Overview
 
-Parkinson's disease affects around 10 million people worldwide, and tremor is one of its most visible and disabling symptoms. Existing monitoring relies on periodic in-clinic assessments that miss the day-to-day variability patients actually live with. TremorMonitor is a full stack system, hardware through cloud, designed to close that gap.
+Parkinson's tremor can vary significantly throughout the day, while many assessments still depend on periodic in-clinic observation. TremorMonitor was designed to explore how wearable sensing, BLE communication, local storage, and mobile dashboards could support more continuous symptom tracking.
 
-The patient wears a lightweight sleeve containing an IMU and MCU that detects tremor events using FFT analysis in the 3.9 to 25 Hz band. The sleeve streams summary data to a phone app over BLE. When tremor is detected, the app can trigger a second BLE device, a wrist-worn pill dispenser, to deliver a dose. All session data is stored locally in SQLite for offline reliability and mirrored to Firebase so that a doctor (with patient consent) can review episodes remotely and a researcher (with anonymized consent) can analyze cohort trends.
+The patient wears a lightweight sleeve containing an IMU and microcontroller. The sleeve streams summary tremor data to the mobile app over BLE. The app stores session data locally in SQLite for offline reliability and can sync selected records to Firebase so that a doctor, with patient consent, can review episodes remotely and a researcher, with anonymized consent, can analyze cohort-level trends.
+
+This repository contains the React Native application and app-side integration logic. Firmware prototypes for the sleeve and dispenser are maintained in a separate repository.
 
 ## Screenshots
 
